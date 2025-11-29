@@ -1,7 +1,6 @@
 import telebot
 import json
 import os
-import re
 from PIL import Image
 import pytesseract
 import speech_recognition as sr
@@ -10,17 +9,20 @@ import io
 import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
-from bidi.algorithm import get_display
-import arabic_reshaper
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from matplotlib import rcParams
 
-# ------------------ تنظیمات ------------------
+# تنظیمات فارسی برای matplotlib
+rcParams['font.family'] = 'DejaVu Sans'
+rcParams['axes.unicode_minus'] = False
+
+# توکن ربات
 TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
 bot = telebot.TeleBot(TOKEN)
+
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض
 
-# ------------------ بارگذاری داده‌ها ------------------
+# بارگذاری داده‌ها
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -31,54 +33,55 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# ------------------ ابزار پردازش متن ------------------
-def extract_amount_and_category(text):
+def parse_amount_category(text):
     """
-    متن رو پردازش می‌کنه تا عدد و دسته‌بندی رو جدا کنه.
-    مثال: '740 هزار تومن سیگار' → (740000, 'سیگار')
+    متن را به مبلغ و دسته‌بندی تشخیص می‌دهد.
+    مثال: "150 هزار تومن ناهار" → amount=150000, category=ناهار
     """
-    # حذف فاصله‌های غیر استاندارد و کاراکترهای اضافه
-    text = text.replace('\u200c', ' ').replace('\xa0', ' ').strip()
-    # پیدا کردن عدد
-    match = re.search(r'(\d+(?:[\.,]\d+)?)(\s*(هزار|میلیون|تومن|ریال)?)', text)
-    if not match:
+    text = text.replace("تومن", "").replace("ریال", "").replace(",", "").strip()
+    words = text.split()
+    if not words:
         return None
-    amount = float(match.group(1).replace(',', ''))
-    unit = match.group(3)
-    if unit == "هزار":
-        amount *= 1000
-    elif unit == "میلیون":
-        amount *= 1000000
-    # دسته‌بندی = باقی متن بعد عدد و واحد
-    category = text[match.end():].strip()
-    if not category:
-        category = "سایر"
-    return int(amount), category
 
-# ------------------ منوی دکمه‌ای ------------------
-def main_menu():
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(
-        KeyboardButton("/report"),
-        KeyboardButton("/addcat"),
-        KeyboardButton("/setbudget"),
-        KeyboardButton("/clear")
-    )
-    return markup
+    # تشخیص مبلغ
+    try:
+        amount = 0
+        for i, word in enumerate(words):
+            if word.isdigit():
+                amount = int(word)
+                multiplier = 1
+                if i + 1 < len(words):
+                    if words[i + 1] in ["هزار", "هزار تومان"]:
+                        multiplier = 1000
+                    elif words[i + 1] in ["میلیون"]:
+                        multiplier = 1000000
+                amount *= multiplier
+                category = " ".join(words[i+2:]) if i+2 <= len(words) else "سایر"
+                return {"amount": amount, "category": category, "note": ""}
+    except:
+        return None
+    return None
 
-# ------------------ دستورات ------------------
+# دکمه منو
+def main_menu(message):
+    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    buttons = [
+        "/report 📊 گزارش",
+        "/addcat ➕ اضافه کردن دسته‌بندی",
+        "/setbudget 💰 تعیین بودجه",
+        "/clear 🔄 پاک کردن همه داده‌ها"
+    ]
+    keyboard.add(*[telebot.types.KeyboardButton(b) for b in buttons])
+    bot.send_message(message.chat.id, "📌 منو ربات:", reply_markup=keyboard)
+
+# دستور /start
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id,
-                     "سلام! ربات حسابداری هوشمند آماده است.\n\n"
-                     "📌 ثبت هزینه با متن: مبلغ دسته‌بندی توضیح\n"
-                     "📌 ارسال عکس یا ویس رسید\n"
-                     "📌 گزارش: /report\n"
-                     "📌 اضافه کردن دسته جدید: /addcat دسته‌بندی\n"
-                     "📌 تنظیم بودجه ماهانه: /setbudget مبلغ\n"
-                     "📌 پاک کردن کل حساب: /clear",
-                     reply_markup=main_menu())
+    main_menu(message)
+    bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
+                                      "✅ هزینه‌ها را با متن، عکس یا ویس ثبت کنید.")
 
+# دستور /addcat
 @bot.message_handler(commands=['addcat'])
 def add_category(message):
     parts = message.text.split(maxsplit=1)
@@ -93,6 +96,7 @@ def add_category(message):
     else:
         bot.reply_to(message, "این دسته‌بندی قبلاً موجود است.")
 
+# دستور /setbudget
 @bot.message_handler(commands=['setbudget'])
 def set_budget(message):
     parts = message.text.split(maxsplit=1)
@@ -106,48 +110,49 @@ def set_budget(message):
     except:
         bot.reply_to(message, "مبلغ معتبر نیست.")
 
+# دستور /clear
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
     global data
     data = {"expenses": [], "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"]}
     save_data()
-    bot.reply_to(message, "✅ تمام داده‌ها پاک شد و از نو ساخته شدند.")
+    bot.reply_to(message, "✅ همه داده‌ها پاک شدند.")
 
-# ------------------ ثبت هزینه با متن ------------------
-@bot.message_handler(func=lambda message: True, content_types=['text'])
+# ثبت هزینه با متن
+@bot.message_handler(func=lambda m: True, content_types=['text'])
 def add_expense_text(message):
-    res = extract_amount_and_category(message.text)
-    if not res:
-        bot.reply_to(message, "❌ متن قابل پردازش نیست. مثال: '740 هزار تومن سیگار'")
+    exp = parse_amount_category(message.text)
+    if not exp:
+        bot.reply_to(message, "❌ فرمت اشتباه. مثال: 150 هزار ناهار")
         return
-    amount, category = res
-    if category not in data["categories"]:
-        data["categories"].append(category)
-    data["expenses"].append({"amount": amount, "category": category, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    if exp["category"] not in data["categories"]:
+        data["categories"].append(exp["category"])
+        bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+    data["expenses"].append(exp)
     save_data()
-    bot.reply_to(message, f"✅ هزینه ثبت شد: {amount} در {category}")
+    bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']} در {exp['category']}")
 
-# ------------------ ثبت هزینه با عکس ------------------
+# ثبت هزینه از عکس
 @bot.message_handler(content_types=['photo'])
-def photo_handler(message):
+def add_expense_photo(message):
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded = bot.download_file(file_info.file_path)
     image = Image.open(io.BytesIO(downloaded))
     text = pytesseract.image_to_string(image, lang='fas')
-    res = extract_amount_and_category(text)
-    if not res:
+    exp = parse_amount_category(text)
+    if exp:
+        if exp["category"] not in data["categories"]:
+            data["categories"].append(exp["category"])
+            bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+        data["expenses"].append(exp)
+        save_data()
+        bot.reply_to(message, f"✅ هزینه از عکس ثبت شد: {exp['amount']} در {exp['category']}")
+    else:
         bot.reply_to(message, "❌ متن داخل عکس قابل پردازش نبود.")
-        return
-    amount, category = res
-    if category not in data["categories"]:
-        data["categories"].append(category)
-    data["expenses"].append({"amount": amount, "category": category, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    save_data()
-    bot.reply_to(message, f"✅ هزینه از عکس ثبت شد: {amount} در {category}")
 
-# ------------------ ثبت هزینه با ویس ------------------
+# ثبت هزینه از ویس
 @bot.message_handler(content_types=['voice'])
-def voice_handler(message):
+def add_expense_voice(message):
     file_info = bot.get_file(message.voice.file_id)
     downloaded = bot.download_file(file_info.file_path)
     audio = AudioSegment.from_ogg(io.BytesIO(downloaded))
@@ -157,20 +162,20 @@ def voice_handler(message):
         audio_data = r.record(source)
         try:
             text = r.recognize_google(audio_data, language="fa-IR")
-            res = extract_amount_and_category(text)
-            if not res:
+            exp = parse_amount_category(text)
+            if exp:
+                if exp["category"] not in data["categories"]:
+                    data["categories"].append(exp["category"])
+                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+                data["expenses"].append(exp)
+                save_data()
+                bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']} در {exp['category']}")
+            else:
                 bot.reply_to(message, "❌ متن ویس قابل پردازش نبود.")
-                return
-            amount, category = res
-            if category not in data["categories"]:
-                data["categories"].append(category)
-            data["expenses"].append({"amount": amount, "category": category, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-            save_data()
-            bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {amount} در {category}")
         except:
             bot.reply_to(message, "❌ خطا در تبدیل ویس به متن.")
 
-# ------------------ گزارش ------------------
+# گزارش
 @bot.message_handler(commands=['report'])
 def report(message):
     if not data["expenses"]:
@@ -187,6 +192,7 @@ def report(message):
     for cat, total in totals.items():
         report_text += f"{cat}: {total}\n"
 
+    # شناسایی هزینه‌های غیرعادی
     anomalies = []
     for cat, amounts in amounts_by_category.items():
         mean = np.mean(amounts)
@@ -194,6 +200,7 @@ def report(message):
         for a in amounts:
             if a > mean + 1.5 * std:
                 anomalies.append(f"{a} در {cat}")
+
     if anomalies:
         report_text += "\n⚠️ هزینه‌های غیرعادی:\n" + "\n".join(anomalies)
     else:
@@ -208,15 +215,16 @@ def report(message):
 
     bot.reply_to(message, report_text)
 
-    # نمودار روند هزینه‌ها
-    dates = [datetime.strptime(exp["date"].split()[0], "%Y-%m-%d") for exp in data["expenses"]]
+    # نمودار خطی
+    dates = [datetime.strptime(exp["date"].split()[0], "%Y-%m-%d") if "date" in exp else datetime.now() for exp in data["expenses"]]
     amounts = [exp["amount"] for exp in data["expenses"]]
+
     plt.figure(figsize=(8,4))
-    plt.scatter(dates, amounts, color='orange', label=get_display(arabic_reshaper.reshape('هزینه روزانه')))
-    plt.plot(dates, np.cumsum(amounts), color='blue', linestyle='--', marker='o', label=get_display(arabic_reshaper.reshape('هزینه انباشته')))
-    plt.title(get_display(arabic_reshaper.reshape("روند هزینه‌ها")))
-    plt.xlabel(get_display(arabic_reshaper.reshape("تاریخ")))
-    plt.ylabel(get_display(arabic_reshaper.reshape("مبلغ")))
+    plt.scatter(dates, amounts, color='orange', label='هزینه روزانه')
+    plt.plot(dates, np.cumsum(amounts), color='blue', linestyle='--', marker='o', label='هزینه انباشته')
+    plt.title("روند هزینه‌ها", loc='right')
+    plt.xlabel("تاریخ")
+    plt.ylabel("مبلغ")
     plt.legend()
     plt.xticks(rotation=30)
     plt.tight_layout()
@@ -227,15 +235,12 @@ def report(message):
 
     # نمودار دایره‌ای
     plt.figure(figsize=(6,6))
-    reshaped_labels = [get_display(arabic_reshaper.reshape(cat)) for cat in totals.keys()]
-    plt.pie(totals.values(), labels=reshaped_labels, autopct='%1.1f%%', colors=plt.cm.Paired.colors)
-    plt.title(get_display(arabic_reshaper.reshape("درصد هزینه‌ها بر اساس دسته‌بندی")))
+    plt.pie(totals.values(), labels=totals.keys(), autopct='%1.1f%%', colors=plt.cm.Paired.colors)
+    plt.title("درصد هزینه‌ها بر اساس دسته‌بندی", loc='right')
     plt.savefig("report_pie.png")
     plt.close()
     with open("report_pie.png", "rb") as f:
         bot.send_photo(message.chat.id, f)
 
-# ------------------ شروع ربات ------------------
+# اجرای ربات
 bot.polling()
-
-
