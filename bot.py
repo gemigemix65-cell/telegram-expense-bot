@@ -8,14 +8,16 @@ from pydub import AudioSegment
 import io
 import matplotlib.pyplot as plt
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
+# ======== توکن ربات ========
 TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
 bot = telebot.TeleBot(TOKEN)
+
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض، قابل تغییر
 
-# بارگذاری داده‌ها
+# ======== بارگذاری داده‌ها ========
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -39,9 +41,10 @@ def process_text(message_text):
     except:
         return None
 
+# ======== دستورات ربات ========
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "سلام! ربات حسابداری هوشمند آماده است.\n"
+    bot.reply_to(message, "سلام! ربات حسابداری آماده است.\n"
                           "📌 ثبت هزینه با متن: مبلغ دسته‌بندی توضیح\n"
                           "📌 ارسال عکس یا ویس رسید\n"
                           "📌 گزارش: /report\n"
@@ -120,7 +123,7 @@ def voice_handler(message):
             if exp:
                 if exp["category"] not in data["categories"]:
                     data["categories"].append(exp["category"])
-                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp["category"]}")
+                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
                 data["expenses"].append(exp)
                 save_data()
                 bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']} در {exp['category']}")
@@ -184,7 +187,10 @@ def report(message):
     with open("report_pie.png", "rb") as f:
         bot.send_photo(message.chat.id, f)
 
-bot.polling()
+# ======== پاکسازی بافر قبل از polling ========
+bot.remove_webhook()
+bot.get_updates(offset=-1)
 
-
+# ======== اجرای polling امن ========
+bot.infinity_polling(timeout=10, long_polling_timeout=5)
 
