@@ -1,12 +1,9 @@
 pyTelegramBotAPI==4.29.1
-pillow==10.0.1
-numpy==2.3.5
-matplotlib==3.8.2
-pytesseract==0.3.10
 SpeechRecognition==3.14.4
 pydub==0.25.1
-python-dotenv==1.2.1
-pandas==2.3.3
+pillow==9.6.0
+numpy==1.26.2
+matplotlib==3.8.1
 
 
 
