@@ -10,23 +10,36 @@ from datetime import datetime
 from matplotlib import rcParams
 
 # تنظیمات Plotting (برای نمودارها)
-# این تنظیمات در سرور Render ممکن است نیاز به نصب فونت‌های بیشتری داشته باشد
 rcParams['font.family'] = 'DejaVu Sans'
 rcParams['axes.unicode_minus'] = False
 
-# توکن ربات (هشدار: برای امنیت بهتر، از متغیر محیطی در Render استفاده کنید)
+# توکن ربات (توصیه می‌شود این را به عنوان متغیر محیطی در Render ذخیره کنید)
 TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض
+DEFAULT_DATA = {"expenses": [], "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"]}
+data = DEFAULT_DATA.copy() # شروع با داده پیش‌فرض
 
-# بارگذاری داده‌ها از JSON
+# بارگذاری ایمن داده‌ها از JSON (اصلاح شده برای رفع KeyError)
 if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-else:
-    data = {"expenses": [], "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"]}
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            loaded_data = json.load(f)
+            # ترکیب با داده‌های پیش‌فرض برای اطمینان از وجود همه کلیدها
+            data.update(loaded_data)
+    except json.JSONDecodeError:
+        # اگر فایل خراب بود، با داده پیش‌فرض ادامه می‌دهد
+        print(f"Error reading {DATA_FILE}. Starting with default data.")
+        pass 
+
+# اطمینان از وجود کلیدهای ضروری (حتی اگر فایل JSON آن‌ها را نداشته باشد)
+if "expenses" not in data:
+    data["expenses"] = []
+if "categories" not in data:
+    data["categories"] = DEFAULT_DATA["categories"]
+
 
 def save_data():
     """ذخیره داده‌ها در فایل JSON و اضافه کردن تاریخ به ورودی‌های فاقد تاریخ"""
@@ -39,7 +52,6 @@ def save_data():
 
 def parse_amount_category(text):
     """متن را به مبلغ و دسته‌بندی تشخیص می‌دهد."""
-    # ساده‌سازی ورودی
     text = text.replace("تومن", "").replace("ریال", "").replace(",", "").strip()
     words = text.split()
     if not words:
@@ -54,7 +66,6 @@ def parse_amount_category(text):
                 amount = int(word)
                 multiplier = 1
                 
-                # تشخیص ضرایب (هزار، میلیون)
                 if i + 1 < len(words):
                     if words[i + 1] in ["هزار", "هزار تومان", "هزارتومن"]:
                         multiplier = 1000
@@ -62,7 +73,6 @@ def parse_amount_category(text):
                         multiplier = 1000000
                 amount *= multiplier
                 
-                # تشخیص دسته‌بندی (کلمات بعد از مبلغ و ضریب)
                 start_index = i + 2 if multiplier > 1 or (i + 1 < len(words) and words[i+1].lower() in ["تومان", "تومن", "ریال"]) else i + 1
                 
                 category_words = words[start_index:]
@@ -94,14 +104,12 @@ def main_menu(message):
 
 # --- Message Handlers ---
 
-# دستور /start
 @bot.message_handler(commands=['start'])
 def start(message):
     main_menu(message)
     bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
                                       "✅ هزینه‌ها را با **متن** یا **ویس** ثبت کنید.")
 
-# دستور /addcat
 @bot.message_handler(commands=['addcat'])
 def add_category(message):
     parts = message.text.split(maxsplit=1)
@@ -116,7 +124,6 @@ def add_category(message):
     else:
         bot.reply_to(message, "این دسته‌بندی قبلاً موجود است.")
 
-# دستور /setbudget
 @bot.message_handler(commands=['setbudget'])
 def set_budget(message):
     parts = message.text.split(maxsplit=1)
@@ -131,7 +138,6 @@ def set_budget(message):
     except:
         bot.reply_to(message, "مبلغ معتبر نیست.")
 
-# دستور /clear
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
     global data
@@ -139,7 +145,6 @@ def clear_data(message):
     save_data()
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.")
 
-# ثبت هزینه با متن 
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
     exp = parse_amount_category(message.text)
@@ -155,13 +160,13 @@ def add_expense_text(message):
     save_data()
     bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در {exp['category']}")
 
-# ثبت هزینه از ویس
+# قابلیت پردازش عکس (OCR) به طور کامل حذف شده است.
+
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
     file_info = bot.get_file(message.voice.file_id)
     downloaded = bot.download_file(file_info.file_path)
     
-    # تبدیل OGG به WAV با pydub (نیاز به FFmpeg)
     try:
         audio = AudioSegment.from_ogg(io.BytesIO(downloaded))
         audio.export("temp.wav", format="wav")
@@ -169,7 +174,6 @@ def add_expense_voice(message):
         bot.reply_to(message, "❌ خطا در پردازش فایل صوتی.")
         return
 
-    # تبدیل گفتار به نوشتار با SpeechRecognition
     r = sr.Recognizer()
     try:
         with sr.AudioFile("temp.wav") as source:
@@ -182,7 +186,6 @@ def add_expense_voice(message):
         bot.reply_to(message, "❌ خطا در تبدیل ویس به متن (احتمالاً صدای واضحی نبود).")
         return
 
-    # پردازش متن به دسته‌بندی و مبلغ
     exp = parse_amount_category(text)
     if exp and exp["amount"] > 0:
         if exp["category"] not in data["categories"]:
@@ -195,9 +198,9 @@ def add_expense_voice(message):
     else:
         bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: {text}")
 
-# دستور /report
 @bot.message_handler(commands=['report'])
 def report(message):
+    # این چک اکنون کاملا ایمن است زیرا ساختار data همیشه توسط کد بارگذاری ایمن تضمین شده است.
     if not data["expenses"]:
         bot.reply_to(message, "هیچ هزینه‌ای ثبت نشده.")
         return
@@ -214,7 +217,6 @@ def report(message):
     for cat, total in totals.items():
         report_text += f"**{cat}**: {total:,.0f} تومان\n"
 
-    # شناسایی هزینه‌های غیرعادی
     anomalies = []
     for cat, amounts in amounts_by_category.items():
         if len(amounts) > 1:
