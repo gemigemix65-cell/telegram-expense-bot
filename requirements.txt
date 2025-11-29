@@ -1,20 +1,17 @@
-# کتابخانه اصلی برای ارتباط با تلگرام
-python-telegram-bot
+# ۱. کتابخانه اصلی ربات (برای import telebot)
+pytelegrambotapi
 
-# مدیریت متغیرهای محیطی
-python-dotenv
-
-# برای پردازش داده‌ها و ساخت فایل اکسل گزارش
-pandas
-openpyxl
-
-# درایور دیتابیس (برای دیتابیس پستگرس Render)
-psycopg2-binary
-
-# برای دانلود فایل‌های ویس
-requests
-
-# کتابخانه‌های پردازش صدا (تبدیل ویس به متن)
-SpeechRecognition
+# ۲. برای تبدیل ویس (.oga) و پردازش گفتار
 pydub
+SpeechRecognition
 
+# ۳. برای نمودارها، محاسبات و گزارش‌ها
+matplotlib
+numpy
+
+# ۴. برای مدیریت داده‌ها (گزارش‌های پیشرفته‌تر)
+pandas
+# openpyxl # اگر فایل اکسل تولید نمی‌کنید، این خط حذف شود
+
+# ۵. ابزارهای کمکی
+requests
