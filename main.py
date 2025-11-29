@@ -1,8 +1,6 @@
 import telebot
 import json
 import os
-from PIL import Image
-import pytesseract
 import speech_recognition as sr
 from pydub import AudioSegment
 import io
@@ -11,11 +9,11 @@ import numpy as np
 from datetime import datetime
 from matplotlib import rcParams
 
-# تنظیمات فارسی برای matplotlib
+# تنظیمات فارسی برای matplotlib (این تنظیمات در سرور Render ممکن است نیاز به نصب فونت‌های بیشتری داشته باشد)
 rcParams['font.family'] = 'DejaVu Sans'
 rcParams['axes.unicode_minus'] = False
 
-# توکن ربات
+# توکن ربات (توصیه می‌شود این را به عنوان متغیر محیطی در Render ذخیره کنید)
 TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
 bot = telebot.TeleBot(TOKEN)
 
@@ -30,13 +28,18 @@ else:
     data = {"expenses": [], "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"]}
 
 def save_data():
+    """ذخیره داده‌ها در فایل JSON"""
+    # تاریخ کنونی را به ورودی‌های جدید اضافه می‌کند (اگر موجود نباشد)
+    for exp in data["expenses"]:
+        if "date" not in exp:
+            exp["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def parse_amount_category(text):
     """
     متن را به مبلغ و دسته‌بندی تشخیص می‌دهد.
-    مثال: "150 هزار تومن ناهار" → amount=150000, category=ناهار
     """
     text = text.replace("تومن", "").replace("ریال", "").replace(",", "").strip()
     words = text.split()
@@ -51,14 +54,28 @@ def parse_amount_category(text):
                 amount = int(word)
                 multiplier = 1
                 if i + 1 < len(words):
-                    if words[i + 1] in ["هزار", "هزار تومان"]:
+                    # اگر بعد از عدد کلمات "هزار" یا "میلیون" بیاید
+                    if words[i + 1] in ["هزار", "هزار تومان", "هزارتومن"]:
                         multiplier = 1000
-                    elif words[i + 1] in ["میلیون"]:
+                    elif words[i + 1] in ["میلیون", "ملیون"]:
                         multiplier = 1000000
                 amount *= multiplier
-                category = " ".join(words[i+2:]) if i+2 <= len(words) else "سایر"
-                return {"amount": amount, "category": category, "note": ""}
-    except:
+                
+                # تشخیص دسته‌بندی
+                category_words = words[i+2:] if i+2 < len(words) else []
+                # بررسی می‌کنیم اگر کلمه بعدی 'تومان' یا 'تومن' باشد از آن رد شویم
+                if i + 1 < len(words) and words[i+1].lower() in ["تومان", "تومن", "ریال"]:
+                    category_words = words[i+2:]
+                else:
+                    category_words = words[i+1:]
+                
+                category = " ".join(category_words).strip()
+                if not category or category.isdigit():
+                    category = "سایر"
+
+                return {"amount": amount, "category": category, "note": "", "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    except Exception as e:
+        # print(f"Error parsing: {e}") # برای دیباگ
         return None
     return None
 
@@ -71,7 +88,12 @@ def main_menu(message):
         "/setbudget 💰 تعیین بودجه",
         "/clear 🔄 پاک کردن همه داده‌ها"
     ]
-    keyboard.add(*[telebot.types.KeyboardButton(b) for b in buttons])
+    # ساخت دکمه‌ها
+    row1 = [telebot.types.KeyboardButton(b) for b in buttons[0:2]]
+    row2 = [telebot.types.KeyboardButton(b) for b in buttons[2:4]]
+    keyboard.add(*row1)
+    keyboard.add(*row2)
+
     bot.send_message(message.chat.id, "📌 منو ربات:", reply_markup=keyboard)
 
 # دستور /start
@@ -79,7 +101,7 @@ def main_menu(message):
 def start(message):
     main_menu(message)
     bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
-                                      "✅ هزینه‌ها را با متن، عکس یا ویس ثبت کنید.")
+                                      "✅ هزینه‌ها را با **متن** یا **ویس** ثبت کنید.")
 
 # دستور /addcat
 @bot.message_handler(commands=['addcat'])
@@ -105,8 +127,10 @@ def set_budget(message):
         return
     try:
         global BUDGET_MONTHLY
-        BUDGET_MONTHLY = float(parts[1])
-        bot.reply_to(message, f"✅ بودجه ماهانه تنظیم شد: {BUDGET_MONTHLY}")
+        # حذف هر نوع کاراکتر غیر عددی از ورودی
+        budget_input = "".join(filter(str.isdigit, parts[1]))
+        BUDGET_MONTHLY = float(budget_input)
+        bot.reply_to(message, f"✅ بودجه ماهانه تنظیم شد: {BUDGET_MONTHLY:,.0f} تومان")
     except:
         bot.reply_to(message, "مبلغ معتبر نیست.")
 
@@ -118,62 +142,67 @@ def clear_data(message):
     save_data()
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.")
 
-# ثبت هزینه با متن
-@bot.message_handler(func=lambda m: True, content_types=['text'])
+# ثبت هزینه با متن (فیلتر برای دستورات را حذف می‌کنیم تا فقط متن‌های معمولی را بگیرد)
+@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
     exp = parse_amount_category(message.text)
-    if not exp:
-        bot.reply_to(message, "❌ فرمت اشتباه. مثال: 150 هزار ناهار")
+    if not exp or exp["amount"] == 0:
+        bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. مثال: 150 هزار ناهار")
         return
+    
+    # اگر دسته‌بندی جدید بود، آن را اضافه می‌کند
     if exp["category"] not in data["categories"]:
         data["categories"].append(exp["category"])
         bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+        
     data["expenses"].append(exp)
     save_data()
-    bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']} در {exp['category']}")
+    bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در {exp['category']}")
 
-# ثبت هزینه از عکس
-@bot.message_handler(content_types=['photo'])
-def add_expense_photo(message):
-    file_info = bot.get_file(message.photo[-1].file_id)
-    downloaded = bot.download_file(file_info.file_path)
-    image = Image.open(io.BytesIO(downloaded))
-    text = pytesseract.image_to_string(image, lang='fas')
-    exp = parse_amount_category(text)
-    if exp:
-        if exp["category"] not in data["categories"]:
-            data["categories"].append(exp["category"])
-            bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
-        data["expenses"].append(exp)
-        save_data()
-        bot.reply_to(message, f"✅ هزینه از عکس ثبت شد: {exp['amount']} در {exp['category']}")
-    else:
-        bot.reply_to(message, "❌ متن داخل عکس قابل پردازش نبود.")
+# **تابع add_expense_photo حذف شده است.**
 
 # ثبت هزینه از ویس
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
+    # ۱. دانلود فایل ویس
     file_info = bot.get_file(message.voice.file_id)
     downloaded = bot.download_file(file_info.file_path)
-    audio = AudioSegment.from_ogg(io.BytesIO(downloaded))
-    audio.export("temp.wav", format="wav")
+    
+    # ۲. تبدیل OGG به WAV با pydub (نیاز به FFmpeg در Docker)
+    try:
+        audio = AudioSegment.from_ogg(io.BytesIO(downloaded))
+        audio.export("temp.wav", format="wav")
+    except Exception as e:
+        bot.reply_to(message, "❌ خطا در پردازش فایل صوتی. (ممکن است FFmpeg در سرور درست نصب نشده باشد)")
+        # print(f"FFmpeg Error: {e}") # برای دیباگ
+        return
+
+    # ۳. تبدیل گفتار به نوشتار با SpeechRecognition
     r = sr.Recognizer()
-    with sr.AudioFile("temp.wav") as source:
-        audio_data = r.record(source)
-        try:
+    try:
+        with sr.AudioFile("temp.wav") as source:
+            audio_data = r.record(source)
             text = r.recognize_google(audio_data, language="fa-IR")
-            exp = parse_amount_category(text)
-            if exp:
-                if exp["category"] not in data["categories"]:
-                    data["categories"].append(exp["category"])
-                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
-                data["expenses"].append(exp)
-                save_data()
-                bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']} در {exp['category']}")
-            else:
-                bot.reply_to(message, "❌ متن ویس قابل پردازش نبود.")
-        except:
-            bot.reply_to(message, "❌ خطا در تبدیل ویس به متن.")
+            os.remove("temp.wav") # پاک کردن فایل موقت
+    except Exception as e:
+        # os.remove("temp.wav") # در صورت خطا هم پاک کند
+        bot.reply_to(message, "❌ خطا در تبدیل ویس به متن (احتمالاً صدای واضحی نبود).")
+        # print(f"Speech Recognition Error: {e}") # برای دیباگ
+        return
+
+    # ۴. پردازش متن به دسته‌بندی و مبلغ
+    exp = parse_amount_category(text)
+    if exp and exp["amount"] > 0:
+        if exp["category"] not in data["categories"]:
+            data["categories"].append(exp["category"])
+            bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+        
+        data["expenses"].append(exp)
+        save_data()
+        bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']:,.0f} تومان در {exp['category']}")
+    else:
+        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: {text}")
+
 
 # گزارش
 @bot.message_handler(commands=['report'])
@@ -184,63 +213,93 @@ def report(message):
 
     totals = {}
     amounts_by_category = {}
+    
+    # جمع‌آوری داده‌ها
     for exp in data["expenses"]:
-        totals[exp["category"]] = totals.get(exp["category"], 0) + exp["amount"]
-        amounts_by_category.setdefault(exp["category"], []).append(exp["amount"])
+        # اگر کلید amount یا category نباشد، صرف نظر می‌کند
+        if "amount" in exp and "category" in exp:
+            totals[exp["category"]] = totals.get(exp["category"], 0) + exp["amount"]
+            amounts_by_category.setdefault(exp["category"], []).append(exp["amount"])
 
     report_text = "📊 گزارش هزینه‌ها:\n"
     for cat, total in totals.items():
-        report_text += f"{cat}: {total}\n"
+        report_text += f"**{cat}**: {total:,.0f} تومان\n"
 
-    # شناسایی هزینه‌های غیرعادی
+    # شناسایی هزینه‌های غیرعادی (با استفاده از numpy)
     anomalies = []
     for cat, amounts in amounts_by_category.items():
-        mean = np.mean(amounts)
-        std = np.std(amounts)
-        for a in amounts:
-            if a > mean + 1.5 * std:
-                anomalies.append(f"{a} در {cat}")
+        if len(amounts) > 1:
+            mean = np.mean(amounts)
+            std = np.std(amounts)
+            # تعریف هزینه غیرعادی: ۱.۵ برابر انحراف معیار بالاتر از میانگین
+            for a in amounts:
+                if a > mean + 1.5 * std:
+                    anomalies.append(f"{a:,.0f} تومان در {cat}")
 
     if anomalies:
-        report_text += "\n⚠️ هزینه‌های غیرعادی:\n" + "\n".join(anomalies)
+        report_text += "\n⚠️ **هزینه‌های غیرعادی**:\n" + "\n".join(anomalies)
     else:
         report_text += "\n✅ هزینه‌ها نرمال هستند."
 
-    total_spent = sum([exp["amount"] for exp in data["expenses"]])
+    total_spent = sum([exp.get("amount", 0) for exp in data["expenses"]])
     if total_spent > BUDGET_MONTHLY:
-        report_text += f"\n💡 هشدار: بودجه ماهانه ({BUDGET_MONTHLY}) تمام شده یا نزدیک است!"
+        report_text += f"\n🚨 **هشدار بودجه**: بودجه ماهانه ({BUDGET_MONTHLY:,.0f} تومان) رد شده است!"
     else:
         remaining = BUDGET_MONTHLY - total_spent
-        report_text += f"\n💡 بودجه باقی‌مانده: {remaining}"
+        report_text += f"\n💡 **بودجه باقی‌مانده**: {remaining:,.0f} تومان"
 
-    bot.reply_to(message, report_text)
+    bot.reply_to(message, report_text, parse_mode='Markdown')
 
-    # نمودار خطی
-    dates = [datetime.strptime(exp["date"].split()[0], "%Y-%m-%d") if "date" in exp else datetime.now() for exp in data["expenses"]]
-    amounts = [exp["amount"] for exp in data["expenses"]]
+    # --- نمودار خطی روند هزینه‌ها ---
+    
+    # داده‌ها را بر اساس تاریخ مرتب می‌کند تا نمودار خطی درست رسم شود
+    sorted_expenses = sorted([exp for exp in data["expenses"] if "date" in exp], key=lambda x: datetime.strptime(x["date"].split()[0], "%Y-%m-%d"))
+    dates = [datetime.strptime(exp["date"].split()[0], "%Y-%m-%d") for exp in sorted_expenses]
+    amounts = [exp["amount"] for exp in sorted_expenses]
+    
+    if dates:
+        plt.figure(figsize=(8,4))
+        plt.plot(dates, np.cumsum(amounts), color='blue', linestyle='-', marker='o', label='هزینه انباشته')
+        plt.title("روند هزینه‌های انباشته", loc='right')
+        plt.xlabel("تاریخ")
+        plt.ylabel("مبلغ (تومان)")
+        plt.legend(loc='upper left')
+        plt.xticks(rotation=30)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("report_line.png")
+        plt.close()
+        try:
+            with open("report_line.png", "rb") as f:
+                bot.send_photo(message.chat.id, f)
+            os.remove("report_line.png") # پاک کردن فایل موقت
+        except Exception as e:
+            bot.send_message(message.chat.id, "❌ خطا در ارسال نمودار خطی.")
+            # print(f"Chart Error: {e}")
 
-    plt.figure(figsize=(8,4))
-    plt.scatter(dates, amounts, color='orange', label='هزینه روزانه')
-    plt.plot(dates, np.cumsum(amounts), color='blue', linestyle='--', marker='o', label='هزینه انباشته')
-    plt.title("روند هزینه‌ها", loc='right')
-    plt.xlabel("تاریخ")
-    plt.ylabel("مبلغ")
-    plt.legend()
-    plt.xticks(rotation=30)
-    plt.tight_layout()
-    plt.savefig("report.png")
-    plt.close()
-    with open("report.png", "rb") as f:
-        bot.send_photo(message.chat.id, f)
 
-    # نمودار دایره‌ای
-    plt.figure(figsize=(6,6))
-    plt.pie(totals.values(), labels=totals.keys(), autopct='%1.1f%%', colors=plt.cm.Paired.colors)
-    plt.title("درصد هزینه‌ها بر اساس دسته‌بندی", loc='right')
-    plt.savefig("report_pie.png")
-    plt.close()
-    with open("report_pie.png", "rb") as f:
-        bot.send_photo(message.chat.id, f)
+    # --- نمودار دایره‌ای دسته‌بندی‌ها ---
+    if totals:
+        plt.figure(figsize=(6,6))
+        # فیلتر کردن دسته‌بندی‌های با مجموع صفر
+        labels = [k for k, v in totals.items() if v > 0]
+        sizes = [v for v in totals.values() if v > 0]
+        
+        if sizes:
+            plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+            plt.title("درصد هزینه‌ها بر اساس دسته‌بندی", loc='right')
+            plt.tight_layout()
+            plt.savefig("report_pie.png")
+            plt.close()
+            try:
+                with open("report_pie.png", "rb") as f:
+                    bot.send_photo(message.chat.id, f)
+                os.remove("report_pie.png") # پاک کردن فایل موقت
+            except:
+                bot.send_message(message.chat.id, "❌ خطا در ارسال نمودار دایره‌ای.")
 
-# اجرای ربات
-bot.polling()
+
+# اجرای ربات (این خط باید آخرین خط فایل باشد)
+if __name__ == '__main__':
+    print("Bot started polling...")
+    bot.polling(none_stop=True)
