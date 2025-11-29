@@ -1,0 +1,5 @@
+﻿python-telegram-bot==20.7
+pandas==2.1.0
+python-dotenv==1.0.0
+numpy==1.26.0
+matplotlib==3.8.0
