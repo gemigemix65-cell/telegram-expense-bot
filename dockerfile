@@ -14,10 +14,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     fontconfig \
-    # نصب فونت‌های استاندارد لینوکس که فارسی را پشتیبانی می‌کنند (برای نمودارها)
-    fonts-dejavu-core \
-    # پکیج عمومی برای اطونت‌های یونیکد
-    ttf-mscorefonts-installer \
+    # نصب یک پکیج عمومی فونت که معمولاً شامل DejaVu Sans است
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # کپی کردن فایل نیازمندی‌ها
