@@ -1,13 +1,18 @@
-# ایمیج سبک Python 3.13
+# پایه: Python 3.13 slim
 FROM python:3.13-slim
 
-# نصب ffmpeg برای پخش و پردازش ویس
-RUN apt-get update && apt-get install -y ffmpeg
+# نصب کتابخانه‌های مورد نیاز سیستم
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libjpeg-dev \
+    zlib1g-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# ساخت دایرکتوری پروژه
+# مسیر کاری
 WORKDIR /app
 
-# کپی فایل‌های پروژه
+# کپی فایل‌ها
 COPY requirements.txt .
 COPY bot.py .
 COPY data.json .
