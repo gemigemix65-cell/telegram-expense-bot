@@ -1,29 +1,20 @@
-# پایه: Python 3.13 slim
-FROM python:3.13-slim
+# استفاده از نسخه پایدار Python
+FROM python:3.11-slim
 
-# نصب کتابخانه‌های مورد نیاز سیستم
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libjpeg-dev \
-    zlib1g-dev \
-    libtiff-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libwebp-dev \
-    tcl8.6-dev tk8.6-dev \
-    ffmpeg \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# مسیر کاری
+# تنظیم دایرکتوری کاری
 WORKDIR /app
 
-# کپی فایل‌ها
-COPY requirements.txt .
+# کپی فایل‌های پروژه
 COPY bot.py .
+COPY requirements.txt .
 COPY data.json .
 
-# نصب پکیج‌های پایتون
+# نصب پیش‌نیازهای سیستم برای Pillow و سایر پکیج‌ها
+RUN apt-get update && apt-get install -y \
+    libjpeg-dev zlib1g-dev libpng-dev ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# بروزرسانی pip و نصب پکیج‌های Python
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
