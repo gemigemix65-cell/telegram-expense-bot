@@ -1,10 +1,20 @@
-pyTelegramBotAPI==4.29.1
-SpeechRecognition==3.14.4
-pydub==0.25.1
-pillow==9.6.0
-numpy==1.26.2
-matplotlib==3.8.1
+# کتابخانه اصلی برای ارتباط با تلگرام
+python-telegram-bot
 
+# مدیریت متغیرهای محیطی
+python-dotenv
 
+# برای پردازش داده‌ها و ساخت فایل اکسل گزارش
+pandas
+openpyxl
 
+# درایور دیتابیس (برای دیتابیس پستگرس Render)
+psycopg2-binary
+
+# برای دانلود فایل‌های ویس
+requests
+
+# کتابخانه‌های پردازش صدا (تبدیل ویس به متن)
+SpeechRecognition
+pydub
 
