@@ -1,0 +1,904 @@
+{
+  "name": "Money Tracker v3",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -416,
+        368
+      ],
+      "id": "5d607be1-6144-4fd2-8c28-7aac074f6a44",
+      "name": "Telegram Trigger",
+      "webhookId": "63532b66-6bce-4f9a-832b-f9d39dfdf0ed",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        848,
+        736
+      ],
+      "id": "57ef16e5-d7aa-43f9-8f27-dc181f1d29ee",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "WEva6ghRnn49YJHH",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=داده ورودی: {{ $json.extractedText }}\nدرخواست کاربر: {{ $json.message.text }}\nدرخواست کاربر: {{ $json.content.parts[0].text }}\nدرخواست کاربر :{{ $json.candidates[0].content.parts[0].text }}",
+        "options": {
+          "systemMessage": "=نقش\nتو یک عامل هوشمند ثبت‌کننده رسید هستی که وظایف زیر رو داری:\n\nفهمیدن هدف (intent) کاربر (ذخیره / دریافت / حذف).\n\nصدا زدن ابزار مناسب با آرگومان‌های درست.\n\nبرگردوندن یک پاسخ کوتاه، دوستانه و مناسب برای تلگرام.\n\nتو دیتای جزئی رو استخراج یا فرمت نمی‌کنی – این کار رو AI Agent Tool انجام می‌ده.\nتمرکزت فقط روی روت و پارامترهای درست برای ابزار مناسبه.\n\nابزارها (اسم دقیق نود در workflow)\nAI Agent Tool → انجام تمام عملیات (ذخیره/دریافت/حذف) و فرمت کردن خروجی برای تلگرام.\n\nنحوه تشخیص هدف کاربر\nپیام کاربر رو یکی از این حالات دسته‌بندی کن:\n\ninput / سـیـمـان / ثبت: کاربر رسید ارسال کرده یا می‌خواد ذخیره کنه.\n\nدریافت: خلاصه، جزئیات، جدول یا JSON می‌خواد.\n\nحذف: حذف تراکنش خاص.\n\nاگه پیام کاربر مبهم بود (مثلاً: «لطفاً این قبض رو بررسی کن و تکراری‌ها رو حذف کن»)، فقط یک سوال کوتاه و کاربردی برای شفاف‌سازی بپرس.\n\nمتغیرهایی که شاید از نود قبلی دریافت کنی\nمتن_رسید\n\nنرخ_تبدیل_ارز\n\nوظیفه ∈ {input, دریافت, حذف}\n\nشناسه_تراکنش\n\nنوع_خروجی ∈ {خلاصه, جزئیات, جدول, json}\n\nتاریخ\n\nتاریخ_شروع\n\nتاریخ_پایان\n\nفروشنده\n\nکلیدواژه\n\nنحوه صدا زدن ابزار\nهمیشه AI Agent Tool رو با یک payload واضح صدا بزن:\n\njson\n{\n  \"وظیفه\": \"<input|دریافت|حذف>\",\n  \"متن_رسید\": \"...\",\n  \"نرخ_تبدیل_ارز\": 15750,\n  \"شناسه_تراکنش\": \"txn_20250821_021530\",\n  \"نوع_خروجی\": \"<خلاصه|جزئیات|جدول|json>\",\n  \"تاریخ\": \"YYYY-MM-DD\",\n  \"تاریخ_شروع\": \"YYYY-MM-DD\",\n  \"تاریخ_پایان\": \"YYYY-MM-DD\",\n  \"فروشنده\": \"نام فروشنده\",\n  \"کلیدواژه\": \"عبارت کلیدی\"\n}\nفقط فیلدهای موردنیاز رو قرار بده.\n\nاگه کاربر JSON خواسته باشه، مقدار نوع_خروجی رو \"json\" بذار.\n\nالگوی تصمیم‌گیری سریع\nاگر متن_رسید داری → وظیفه = \"input\" → AI Agent Tool رو صدا بزن.\n\nکاربر خلاصه/جزئیات/جدول/json خواسته → وظیفه = \"دریافت\" → AI Agent Tool رو صدا بزن.\n\nکاربر حذف خواست → وظیفه = \"حذف\" → AI Agent Tool رو صدا بزن و اگر شناسه_تراکنش داری همراهش بفرست.\n\nسبک پاسخگو بودن\nجواب نهایی رو همیشه از AI Agent Tool دریافت و ارسال کن.\n\nاگر نیاز به شفاف‌سازی بود: حداکثر یک سوال کوتاه و دوستانه بپرس.\n\nمگر اینکه کاربر خودش \"JSON\" بخواد، JSON ارسال نکن."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        384
+      ],
+      "id": "057a6e4a-934e-41f0-b1a8-b0c843275fdf",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1264,
+        384
+      ],
+      "id": "777f7038-f0cb-4abd-927d-e7377220879e",
+      "name": "Send a text message",
+      "webhookId": "56e83f7a-61cd-4a44-8b66-0b7395486f50",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.photo }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "array",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "8c28eabe-f36c-409b-ad29-4cbd0c248c44"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "photo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c0ee5cc6-2120-47dd-98d3-a057282232b7",
+                    "leftValue": "={{ $json.message.document }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "document"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0a50a63f-497f-4f09-80b7-ab89e0ee40be",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "text"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "78f5f5f7-1d73-46eb-b0f6-5629f4ecdfcf",
+                    "leftValue": "={{ $json.message.voice }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "object",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "voice"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -192,
+        336
+      ],
+      "id": "14dca241-4f5d-4dbf-aa4a-3bcb9dc90449",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE",
+          "mode": "list",
+          "cachedResultName": "Update Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_transaksi": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('id_transaksi__using_to_match_', ``, 'string') }}",
+            "tanggal_transaksi": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('tanggal_transaksi', ``, 'string') }}",
+            "jenis_transaksi": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('jenis_transaksi', `Please define is it's Income or Expense`, 'string') }}",
+            "kategori": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('kategori', `Please define one of the category below:\n\nIncome:\n- Gaji / Pendapatan Utama\n- Bonus\n- Komisi / Freelance\n- Penjualan Produk\n- Investasi / Dividen\n- Bunga Tabungan\n- Uang Sewa Masuk\n- Hadiah / Reward\n- Refund / Pengembalian Dana\n- Lain-lain (Pemasukan Tambahan)\n\nExpense:\n- Makan & Minum\n- Transportasi\n- Tempat Tinggal (Sewa / Cicilan Rumah)\n- Listrik, Air, Internet\n- Belanja Harian\n- Hiburan / Rekreasi\n- Pendidikan\n- Asuransi\n- Kesehatan / Obat-obatan\n- Donasi / Sedekah\n- Cicilan / Hutang\n- Tabungan / Investasi\n- Perawatan Diri\n- Pakaian\n- Biaya Anak / Keluarga\n- Hewan Peliharaan\n- Pajak / Administrasi\n- Keperluan Kantor / Bisnis\n- Langganan (Netflix, Spotify, dll)\n- Lain-lain (Pengeluaran Tak Terduga)\"`, 'string') }}",
+            "mata_uang": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('mata_uang', ``, 'string') }}",
+            "jumlah": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('jumlah', ``, 'string') }}",
+            "items": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('items', ``, 'string') }}",
+            "nama_merchant": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('nama_merchant', ``, 'string') }}",
+            "alamat_merchant": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('alamat_merchant', ``, 'string') }}"
+          },
+          "matchingColumns": [
+            "id_transaksi"
+          ],
+          "schema": [
+            {
+              "id": "id_transaksi",
+              "displayName": "id_transaksi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tanggal_transaksi",
+              "displayName": "tanggal_transaksi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "jenis_transaksi",
+              "displayName": "jenis_transaksi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kategori",
+              "displayName": "kategori",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mata_uang",
+              "displayName": "mata_uang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "jumlah",
+              "displayName": "jumlah",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "items",
+              "displayName": "items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nama_merchant",
+              "displayName": "nama_merchant",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alamat_merchant",
+              "displayName": "alamat_merchant",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1152,
+        944
+      ],
+      "id": "b358a4f5-41ae-4d1c-86b3-0b1746ffb9f8",
+      "name": "Update Data",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "LciA9jWY91qVgOBL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE",
+          "mode": "list",
+          "cachedResultName": "Update Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1280,
+        944
+      ],
+      "id": "d6a0f7c4-7808-4bb4-a001-92a5dd0b9b06",
+      "name": "Get Data",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "LciA9jWY91qVgOBL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "=Input data, edit, hapus, dan memberikan data dari Google Sheets",
+        "text": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Prompt__User_Message_', ``, 'string') }}",
+        "options": {
+          "systemMessage": "=پیام سیستمی — ابزار عامل هوشمند (اجراکننده)\nنقش\nتو عملیات ذخیره/دریافت/حذف رو به Google Sheets اجرا می‌کنی و پاسخ متنی رو برای تلگرام آماده می‌کنی.\nهمچنین تو الزاماً باید قادر به استخراج و محاسبه موارد زیر باشی:\n\nتعداد محصولات یونیک در ستون items\n\nمجموع تعداد کل محصولات\n\nاز پاسخ دادن با بهانه \"داده محصولات توی متن هست\" خودداری کن. اگر items در متن چند خطی موجود باشد، باید آن را پردازش کنی.\n\nساختار Google Sheets (۱ سطر = ۱ رسید)\ntext\nid_transaksi (شناسه تراکنش),\ntanggal_transaksi (تاریخ تراکنش - YYYY-MM-DD),\nnama_merchant (نام فروشنده),\nalamat_merchant (آدرس فروشنده),\nmata_uang (واحد پول),\ntotal_dalam_rupiah (مجموع به روپیه - عدد/null),\nitems (چند خطی: \"نام محصول | قیمت واحد_پول\")\nکلید اصلی: id_transaksi (یونیک).\nهنگام upsert، ستون کلیدی باید id_transaksi باشد.\n\nنرمال‌سازی اعداد (الزامی)\nIDR/Rp: جداکننده هزارگان (. یا ,) رو حذف کن. اعشار رو نادیده بگیر.\nمثال: 36.000, 36,000, 36.000,00 → 36000\n\nغیر از IDR (USD/EUR/CHF/و غیره): جداکننده هزارگان رو حذف کن؛ کاما اعشار رو به نقطه تبدیل کن (18,50 → 18.50).\n\ntotal_dalam_rupiah (مجموع به روپیه):\n\nاگر واحد پول = IDR → از مجموع نرمال‌شده استفاده کن.\n\nاگر ≠ IDR و fx_rate_idr موجود باشد → round(total_amount * fx_rate_idr)؛ اگر موجود نباشد → null.\n\nقوانین تاریخ\nتاریخ رو از رسید استخراج کن؛ اگر موجود نبود، از تاریخ امروز استفاده کن ({{ $now }}).\n\nفرمت خروجی الزاماً YYYY-MM-DD.\n\nقوانین تجزیه ITEMS و محاسبه تعداد\nitems یک متن چند خطی است. هر خط معمولاً شامل نام، تعداد و قیمت است، اما فرمت می‌تونه متغیر باشه.\nتو باید این موارد رو نرمال‌سازی و تعداد محصولات رو بر اساس قوانین زیر محاسبه کنی:\n\nتشخیص الگوهای رایج\nمثال‌هایی که باید شناسایی بشن:\n\nIndomie Goreng بعدش خط بعدی 1 lusin x 36,000\n\nFruit Tea Apple بعدش خط بعدی 1 500 ml x 7,000\n\nBelfood Sosis Bakar بعدش خط بعدی 1 x 27,000\n\nتعداد (Kuantitas)\n\nاگر عدد صریح وجود داره (مثلاً 2 x 15.000)، از اون عدد استفاده کن.\n\nاگر واحد ضربی وجود داره: lusin (دوجین) = 12، kodi = 20\n\nاگر عدد واضحی نیست → فرض کن qty = 1.\n\nقیمت\n\nاگر نوشته شده x <قیمت> پس اون قیمت واحد است.\n\nاگر فقط <مجموع_خط> بدون x نوشته شده، فرض کن اون کل مبلغ خط است.\n\nنام محصول\n\nاز قسمت قبل از الگوی تعداد/قیمت بردار، یا از خط قبلی اگر فرمت دو خطی باشه.\n\nمحاسبه خروجی\n\nproduk_unik (محصولات یونیک): تعداد نام‌های محصول متفاوت.\n\ntotal_qty (مجموع تعداد): جمع تمام تعدادها.\n\nتلرانس (انعطاف‌پذیری)\n\nفاصله/املای ناسازگار باید به درستی مدیریت بشه.\n\nاگر همچنان مبهم بود، پیش‌فرض qty = 1.\n\nحالت: ورودی / ذخیره\nورودی: text_struk (متن رسید)، اختیاری fx_rate_idr (نرخ تبدیل)، اختیاری id_transaksi (شناسه تراکنش).\n\nمراحل:\n\nاستخراج tanggal_transaksi, nama_merchant, alamat_merchant, mata_uang, total_amount, items.\n\nاعمال نرمال‌سازی اعداد.\n\nتعیین id_transaksi:\n\nاز کاربر استفاده کن، یا بساز: txn_<YYYYMMDD>_<HHmmss>.\n\nUpsert به Google Sheets:\n\njson\n{\n  \"row\": {\n    \"id_transaksi\": \"...\",\n    \"tanggal_transaksi\": \"YYYY-MM-DD\",\n    \"nama_merchant\": \"...\",\n    \"alamat_merchant\": \"...\",\n    \"mata_uang\": \"IDR\",\n    \"total_dalam_rupiah\": 123456,\n    \"items\": \"محصول A | 10000 IDR\\nمحصول B | 25000 IDR\"\n  },\n  \"upsertKey\": \"id_transaksi\"\n}\nپاسخ تلگرام:\n\ntext\nرسید ذخیره شد\nشناسه     : <id_transaksi>\nتاریخ     : <tanggal_transaksi>\nفروشنده  : <nama_merchant>\nمجموع    : Rp<total_dalam_rupiah یا \"-\">\nدر صورت خطا:\n\ntext\nذخیره‌سازی ناموفق: <خطای مختصر>\nحالت: دریافت (خلاصه/جزئیات/جدول/JSON)\nورودی: فیلتر از id_transaksi, tanggal, tanggal_mulai..tanggal_selesai, merchant, keyword, format_output.\n\nGet Data رو صدا بزن و بر اساس پارامترها فیلتر کن.\n\nتجزیه items رو انجام بده تا produk_unik و total_qty محاسبه بشه.\n\nپاسخ:\n\nخلاصه (Ringkas)\n\ntext\nخلاصه <دوره/فروشنده>\nتراکنش‌ها : <تعداد>\nمجموع Rp : <total_rp>\nمحصولات   : <produk_unik>\nتعداد     : <total_qty>\nجزئیات (Detail)\n\ntext\nجزئیات تراکنش\nشناسه     : <id_transaksi>\nتاریخ     : <tanggal_transaksi>\nفروشنده  : <nama_merchant>\nمجموع    : Rp<total_dalam_rupiah یا \"-\">\nمحصولات   : <produk_unik>\nتعداد     : <total_qty>\nآیتم‌ها:\n<items_تفکیک‌شده_اختیاری>\nجدول (Tabel) (حداکثر ۵۰ سطر)\n\ntext\nid_transaksi | tanggal | merchant | total | produk | qty\ntxn_...      | 2025-08-21 | Alfa   | 36000 | 3      | 14\nJSON\n\njson\n{\n  \"rows\": [...],\n  \"summary\": {\n    \"count\": X,\n    \"total_rp\": Y,\n    \"produk_unik\": P,\n    \"total_qty\": Q\n  }\n}\nاگر خالی بود:\n\ntext\nهیچ داده‌ای مطابقت ندارد.\nحالت: حذف\nورودی: ترجیحاً id_transaksi.\n\nاگر id_transaksi موجود باشه → Delete Row رو صدا بزن:\n\njson\n{ \"id_transaksi\": \"txn_20250821_021530\" }\nاگر نیاز به rowNumber داری: Get Data → پیدا کردن سطر → گرفتن rowNumber → Delete Row.\n\nاگر ID موجود نیست: Get Data بر اساس فیلتر. اگر نتیجه >1 باشه، لیست رو نمایش بده و از کاربر بخواه ID انتخاب کنه.\n\nپاسخ تلگرام:\n\ntext\nتراکنش حذف شد\nشناسه     : <id_transaksi>\nتاریخ     : <tanggal_transaksi>\nفروشنده  : <nama_merchant>\nمجموع    : Rp<total_dalam_rupiah یا \"-\">\nدر صورت خطا:\n\ntext\nحذف ناموفق: <خطای مختصر>\nقوانین تکمیلی\nUpdate Data فقط برای ذخیره‌سازی.\n\nGet Data فقط برای خواندن.\n\nDelete Row فقط برای حذف.\n\nJSON ارسال نکن مگر کاربر \"JSON\" بخواهد.\n\nپاسخ کوتاه، واضح، دوستانه.\n\ntotal_dalam_rupiah الزاماً عدد باشد.\n\nاگر داده کامل نیست، درخواست شفاف‌سازی کن یا با مقدار null ذخیره کن.\n\nهنگام صدا زدن Tool، JSON خالص تک‌خطی بفرست بدون code‑fence؛ خط جدید درون string به صورت \\\\n نوشته شود.\n\nزمان فعلی: {{ $now }}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        1088,
+        640
+      ],
+      "id": "1d18efe4-c9ae-4083-91fe-a2e07bf87646",
+      "name": "Google Sheets Agent"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.photo[2].file_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        32,
+        -16
+      ],
+      "id": "a1491272-8a52-42b8-acd3-bce5198858b4",
+      "name": "Get a Image",
+      "webhookId": "941e3dca-0935-4271-9a95-80d4e0ef36c8",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.document.file_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        256
+      ],
+      "id": "db2e3bc8-ca21-47c9-b28d-00a8ccc4e6cf",
+      "name": "Get a file",
+      "webhookId": "690693d3-87ef-4722-b2c0-779d35ded47f",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        160
+      ],
+      "id": "9a76e212-439f-4627-9e80-37331b728f04",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').item.json.message.chat.id }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        944,
+        576
+      ],
+      "id": "acc7c90e-1a8e-48f0-a8a7-3168c804fe73",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "documentId": {
+          "__rl": true,
+          "value": "1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE",
+          "mode": "list",
+          "cachedResultName": "Update Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Sx-Sardu-LHY8KzBhyfla3eUZQxmo1N8zZXCYgI7KTE/edit#gid=0"
+        },
+        "startIndex": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Start_Row_Number', ``, 'number') }}",
+        "numberToDelete": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Number_of_Rows_to_Delete', ``, 'number') }}"
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1408,
+        944
+      ],
+      "id": "e4e14fe4-e53f-4d50-85bd-b9c986c8835a",
+      "name": "Delete Row",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "LciA9jWY91qVgOBL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3104c2e-5150-4605-998b-d09b968c6590",
+              "leftValue": "={{ $json.message.document.mime_type }}",
+              "rightValue": "=application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        32,
+        176
+      ],
+      "id": "1f159a49-11d7-4e08-a012-2560c1b0d132",
+      "name": "is PDF"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.document.file_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        80
+      ],
+      "id": "121efbd8-8483-4e02-9ee9-0e724e5cbb2b",
+      "name": "Get a image as file",
+      "webhookId": "2d8bb6da-e480-4d53-ab54-9687701ae4a3",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.0-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.0-flash"
+        },
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        480,
+        480
+      ],
+      "id": "05fffc0e-8e72-45a1-a639-d0995ef65ab5",
+      "name": "Transcribe a recording",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "WEva6ghRnn49YJHH",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.voice.file_id }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        288,
+        480
+      ],
+      "id": "f19a3f26-a925-4390-bb9f-47cca6753d22",
+      "name": "Get a audio",
+      "webhookId": "5873cad4-d595-4e56-8cc6-3b9f9bb15a6d",
+      "credentials": {
+        "telegramApi": {
+          "id": "DZFjXnHqnkV3jUgk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "چیز هایی که خریداری کردم رو از این عکس استخراج کن\n",
+        "inputType": "binary",
+        "simplify": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "b4455267-ce15-4897-991e-44aec58e76eb",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "WEva6ghRnn49YJHH",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "document",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "text": "فایلی که برات ارسال میشه تصویر رسید هستش موارد  رسید رو ازش استخراج کن",
+        "simplify": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        480,
+        192
+      ],
+      "id": "1b4cc56d-9602-4139-8df4-0864a794f68f",
+      "name": "Analyze document",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "WEva6ghRnn49YJHH",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Get a Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "is PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get a audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Google Sheets Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Google Sheets Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a Image": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a file": {
+      "main": [
+        [
+          {
+            "node": "Analyze document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Row": {
+      "ai_tool": [
+        [
+          {
+            "node": "Google Sheets Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "is PDF": {
+      "main": [
+        [
+          {
+            "node": "Get a file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get a image as file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a image as file": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze document": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "19eca95d-c6d6-4cbb-861e-0b2ef1bcba98",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "64b1290db2f54c488a77b9e95660995a497666cf27265394a131d7e306a47b93"
+  },
+  "id": "sXTtBQzbMlfSTaoj",
+  "tags": []
+}
