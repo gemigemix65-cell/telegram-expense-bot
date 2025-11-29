@@ -2,11 +2,17 @@
 FROM python:3.13-slim
 
 # نصب کتابخانه‌های مورد نیاز سیستم
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libjpeg-dev \
     zlib1g-dev \
+    libtiff-dev \
+    libfreetype6-dev \
+    liblcms2-dev \
+    libwebp-dev \
+    tcl8.6-dev tk8.6-dev \
     ffmpeg \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # مسیر کاری
@@ -19,7 +25,7 @@ COPY data.json .
 
 # نصب پکیج‌های پایتون
 RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # اجرای ربات
 CMD ["python", "bot.py"]
