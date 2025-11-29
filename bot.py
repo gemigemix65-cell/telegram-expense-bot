@@ -13,9 +13,9 @@ from datetime import datetime, timedelta
 TOKEN = "8221583925:AAEEqJ9x2mOhttqLikccLTGjBEOs2MHtuVs"
 bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
-BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض، قابل تغییر
+BUDGET_MONTHLY = 500000 # بودجه ماهانه پیش‌فرض، قابل تغییر 
+# بارگذاری داده ها
 
-# بارگذاری داده‌ها
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -185,3 +185,4 @@ def report(message):
         bot.send_photo(message.chat.id, f)
 
 bot.polling()
+
