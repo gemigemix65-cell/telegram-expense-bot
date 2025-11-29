@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime, timedelta
 
-TOKEN = "8221583925:AAEEqJ9x2m0httqLjkccLTGjBEOs2MHtuVs"
+TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
 bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض، قابل تغییر
@@ -185,5 +185,6 @@ def report(message):
         bot.send_photo(message.chat.id, f)
 
 bot.polling()
+
 
 
