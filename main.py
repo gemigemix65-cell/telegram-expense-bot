@@ -10,7 +10,8 @@ from datetime import datetime
 from matplotlib import rcParams
 
 # تنظیمات Plotting (برای نمودارها)
-rcParams['font.family'] = 'DejaVu Sans'
+rcParams['font.family'] = 'DejaVu Sans' 
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False
 
 # توکن ربات (توصیه می‌شود این را به عنوان متغیر محیطی در Render ذخیره کنید)
@@ -290,3 +291,4 @@ def report(message):
 if __name__ == '__main__':
     print("Bot started polling...")
     bot.polling(none_stop=True)
+
