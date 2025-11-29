@@ -15,7 +15,7 @@ bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000  # بودجه ماهانه پیش‌فرض، قابل تغییر
 
-# بارگذاری داده ها
+# بارگذاری داده‌ها
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -120,7 +120,7 @@ def voice_handler(message):
             if exp:
                 if exp["category"] not in data["categories"]:
                     data["categories"].append(exp["category"])
-                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
+                    bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp["category"]}")
                 data["expenses"].append(exp)
                 save_data()
                 bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']} در {exp['category']}")
