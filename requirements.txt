@@ -1,17 +1,12 @@
-# ۱. کتابخانه اصلی ربات (برای import telebot)
-pytelegrambotapi
+pyTelegramBotAPI
 
 # ۲. برای تبدیل ویس (.oga) و پردازش گفتار
 pydub
 SpeechRecognition
 
-# ۳. برای نمودارها، محاسبات و گزارش‌ها
+# ۳. برای نمودارها و رندر تصاویر (به جای numpy/pandas)
 matplotlib
-numpy
+Pillow
 
-# ۴. برای مدیریت داده‌ها (گزارش‌های پیشرفته‌تر)
-pandas
-# openpyxl # اگر فایل اکسل تولید نمی‌کنید، این خط حذف شود
-
-# ۵. ابزارهای کمکی
-requests
+# ۴. ابزارهای کمکی
+requests 
