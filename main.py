@@ -10,6 +10,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from matplotlib import rcParams
 import csv
+import random # برای پیام‌های پیشنهادی هوشمند
 
 # --- تنظیمات عمومی ---
 TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
@@ -21,17 +22,11 @@ DEFAULT_DATA = {
     "expenses": [], 
     "income": [], 
     "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
-    "goals": [], 
-    "recurrences": []
+    "goals": [], # باقی‌مانده در دیتا برای حفظ ساختار، اما کار نمی‌کند
+    "recurrences": [] # باقی‌مانده در دیتا برای حفظ ساختار، اما کار نمی‌کند
 } 
 
-SMART_CATEGORIES = {
-    "خوراک": ["غذا", "نان", "برنج", "میوه", "آبمیوه", "شام", "ناهار", "صبحانه", "سوپرمارکت", "فست فود", "املت", "پیتزا"],
-    "حمل و نقل": ["تاکسی", "اسنپ", "تپسی", "اتوبوس", "مترو", "بنزین", "ماشین"],
-    "تفریح": ["سینما", "کافه", "رستوران", "بلیط", "پارک"],
-    "پوشاک": ["لباس", "کفش", "پیراهن", "کت", "شلوار", "جوراب"],
-    "سیگار": ["سیگار", "وینستون", "بهمن", "مارلبورو", "توتون"]
-}
+# ❌ حذف SMART_CATEGORIES (بنا به درخواست کاربر)
 
 # --- تنظیمات Plotting ---
 rcParams['font.family'] = 'DejaVu Sans'
@@ -65,51 +60,7 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-def check_and_run_recurrences():
-    """بررسی و اجرای هزینه‌های تکراری."""
-    now = datetime.now()
-    new_expenses_count = 0
-    
-    for rec in data["recurrences"]:
-        try:
-            last_run = datetime.strptime(rec['last_run'], "%Y-%m-%d")
-            should_run = False
-            
-            if rec['frequency'] == 'ماهانه' and (now.year > last_run.year or (now.year == last_run.year and now.month > last_run.month)):
-                should_run = True
-            elif rec['frequency'] == 'هفتگی' and now.date() > last_run.date() and (now - last_run).days >= 7:
-                 should_run = True
-            
-            if should_run:
-                data["expenses"].append({
-                    "amount": rec['amount'],
-                    "category": rec['category'],
-                    "note": f"هزینه تکراری: {rec['name']}",
-                    "date": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tags": ["تکراری"]
-                })
-                rec['last_run'] = now.strftime("%Y-%m-%d")
-                new_expenses_count += 1
-                
-        except Exception as e:
-            print(f"Error running recurrence {rec['name']}: {e}")
-            continue
-            
-    if new_expenses_count > 0:
-        save_data()
-    return new_expenses_count
-
-def guess_category_from_text(text, known_categories):
-    """حدس می‌زند دسته‌بندی را از روی متن یادداشت"""
-    text_lower = text.lower()
-    for cat in known_categories:
-        if cat.lower() in text_lower:
-            return cat
-    for category, keywords in SMART_CATEGORIES.items():
-        if category in known_categories and any(kw in text_lower for kw in keywords):
-            return category
-    return "سایر"
-
+# ❌ حذف check_and_run_recurrences
 
 def parse_amount_category(text, item_type="expense"):
     """متن را به مبلغ، دسته‌بندی/منبع و تگ‌ها تفکیک می‌کند."""
@@ -121,18 +72,21 @@ def parse_amount_category(text, item_type="expense"):
     try:
         amount = 0
         tags = []
+        note_parts = []
+        explicit_category = None
         
-        # استخراج تگ‌ها
-        text_without_tags = []
+        # استخراج تگ‌ها و تفکیک دسته‌بندی صریح
+        temp_words = []
         for word in words:
             if word.startswith('#'):
                 tags.append(word[1:])
             else:
-                text_without_tags.append(word)
+                temp_words.append(word)
+        words = temp_words
+
         
-        words = text_without_tags
-        text = " ".join(words)
-        
+        # پیدا کردن مبلغ
+        amount_index = -1
         for i, word in enumerate(words):
             if word.isdigit():
                 amount = int(word)
@@ -141,45 +95,73 @@ def parse_amount_category(text, item_type="expense"):
                 if i + 1 < len(words):
                     if words[i + 1] in ["هزار", "هزار تومان", "هزارتومن"]:
                         multiplier = 1000
+                        amount_index = i + 1
                     elif words[i + 1] in ["میلیون", "ملیون"]:
                         multiplier = 1000000
+                        amount_index = i + 1
+                    elif words[i + 1].lower() in ["تومان", "تومن", "ریال"]:
+                        amount_index = i + 1
+                    else:
+                        amount_index = i
+                else:
+                    amount_index = i
+                    
                 amount *= multiplier
                 
-                start_index = i + 2 if multiplier > 1 or (i + 1 < len(words) and words[i+1].lower() in ["تومان", "تومن", "ریال"]) else i + 1
+                # بقیه کلمات برای دسته و یادداشت
+                remaining_text = " ".join(words[amount_index + 1:]).strip()
                 
-                remaining_text = " ".join(words[start_index:]).strip()
-                
-                first_word_after_amount = words[start_index] if start_index < len(words) else ""
-                
-                if item_type == "expense":
-                    
+                # تلاش برای یافتن دسته‌بندی صریح در ابتدای متن باقیمانده
+                if remaining_text:
+                    first_word_after_amount = remaining_text.split()[0]
                     if first_word_after_amount in data["categories"]:
                         explicit_category = first_word_after_amount
-                        note = " ".join(words[start_index+1:]).strip() 
-                    else:
-                        explicit_category = ""
+                        note = " ".join(remaining_text.split()[1:]).strip()
+                    elif first_word_after_amount:
+                        # اگر کلمه اول دسته‌بندی موجود نیست، آن را به عنوان یادداشت در نظر بگیریم و دسته‌بندی را "سایر" بگذاریم.
+                        # این منطق برای پشتیبانی از درخواست جدید است.
                         note = remaining_text
-
-                    if not explicit_category or explicit_category.isdigit():
-                        category = guess_category_from_text(note, data["categories"])
-                    else:
-                        category = explicit_category
                         
-                    if not note:
-                        note = category
-                    
+                    else:
+                         note = remaining_text
+                else:
+                    note = ""
+                
+                
+                if item_type == "expense":
+                    # 🔴 FIX 3: منطق جدید دسته‌بندی
+                    if explicit_category:
+                        category = explicit_category
+                    else:
+                        # بررسی می‌کنیم اگر کاربر فقط مبلغ و یک کلمه دیگر داده است، آن را به عنوان دسته جدید بسازیم
+                        if amount_index + 1 < len(words) and len(words[amount_index + 1:]) == 1:
+                            category = words[amount_index + 1] # ساخت دسته جدید
+                            note = category
+                        elif remaining_text:
+                            # اگر کاربر متنی داده، آن را یادداشت قرار می‌دهیم و دسته را سایر
+                            category = "سایر" 
+                            note = remaining_text
+                        else:
+                            # اگر هیچ متن دیگری نداده، دسته "سایر"
+                            category = "سایر" 
+                            note = category
+
                     return {"amount": amount, "category": category, "note": note, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tags": tags}
                 
                 elif item_type == "income":
                     source = remaining_text if remaining_text else "درآمد متفرقه"
                     return {"amount": amount, "source": source, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tags": tags}
+                
+                # فقط اولین مبلغ را در نظر بگیریم و خارج شویم
+                break
 
-    except Exception:
+    except Exception as e:
+        print(f"Error parsing text: {e}")
         return None
     return None
 
 def generate_report(expenses_list, period_name, message):
-    """تابع تولید گزارش که اکنون در ابتدای فایل است."""
+    """تابع تولید گزارش."""
     if not expenses_list:
         return f"⚠️ هیچ هزینه‌ای در بازه **{period_name}** ثبت نشده است.", None, None
 
@@ -216,13 +198,12 @@ def generate_report(expenses_list, period_name, message):
 def main_menu(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
+    # ❌ حذف /recur و /goal از منو
     buttons = [
         "/report 📊 گزارش کلی",
         "/filter 🔍 گزارش دسته‌ای",
         "/income 💵 ثبت درآمد",
         "/undo 🔙 حذف آخر",
-        "/goal 🎯 هدف‌گذاری",
-        "/recur 🔁 تکرار هزینه",
         "/addcat ➕ دسته‌بندی",
         "/setbudget 💰 بودجه",
         "/history 📜 تاریخچه",
@@ -236,7 +217,6 @@ def main_menu(message):
     keyboard.row(types.KeyboardButton(buttons[4]), types.KeyboardButton(buttons[5]))
     keyboard.row(types.KeyboardButton(buttons[6]), types.KeyboardButton(buttons[7]))
     keyboard.row(types.KeyboardButton(buttons[8]), types.KeyboardButton(buttons[9]))
-    keyboard.row(types.KeyboardButton(buttons[10]), types.KeyboardButton(buttons[11]))
 
     return keyboard
 
@@ -246,19 +226,20 @@ def main_menu(message):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    check_and_run_recurrences()
+    # ❌ حذف check_and_run_recurrences
     keyboard = main_menu(message)
     bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
                                       "✅ هزینه‌ها و درآمدها را با **متن** یا **ویس** ثبت کنید. می‌توانید از **تگ** نیز استفاده کنید (مثال: ۱۰۰۰ نان #نانوایی)", reply_markup=keyboard)
 
 
-# 🚨 ثبت هزینه با ویس (اولویت بالا)
+# 🚨 ثبت هزینه با ویس (اولویت بالا) 🔴 FIX 6: بهبود تشخیص ویس
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
     bot.send_message(message.chat.id, "در حال پردازش ویس...", reply_markup=types.ReplyKeyboardRemove())
     file_info = bot.get_file(message.voice.file_id)
     downloaded = bot.download_file(file_info.file_path)
     
+    # ایجاد فایل .wav
     try:
         audio = AudioSegment.from_ogg(io.BytesIO(downloaded))
         audio.export("temp.wav", format="wav")
@@ -270,14 +251,15 @@ def add_expense_voice(message):
     text = ""
     try:
         with sr.AudioFile("temp.wav") as source:
-            audio_data = r.record(source)
+            # اعمال محدودیت زمانی برای ضبط
+            audio_data = r.record(source, duration=10) 
             # افزایش مدت زمان انتظار برای تشخیص
-            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=5) 
+            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7) 
             os.remove("temp.wav")
     except sr.WaitTimeoutError:
         if os.path.exists("temp.wav"):
             os.remove("temp.wav")
-        bot.reply_to(message, "❌ تشخیص گفتار بیشتر از حد مجاز طول کشید. لطفاً دوباره و واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
+        bot.reply_to(message, "❌ تشخیص گفتار بیشتر از حد مجاز طول کشید (۷ ثانیه). لطفاً دوباره و واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
         return
     except Exception:
         if os.path.exists("temp.wav"):
@@ -287,6 +269,7 @@ def add_expense_voice(message):
 
     exp = parse_amount_category(text, item_type="expense")
     if exp and exp["amount"] > 0:
+        # 🔴 FIX 3: منطق ایجاد دسته
         if exp["category"] not in data["categories"]:
             data["categories"].append(exp["category"])
             bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
@@ -295,7 +278,7 @@ def add_expense_voice(message):
         save_data()
         bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
     else:
-        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: {text}", reply_markup=main_menu(message))
+        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
 # 🚨 ثبت هزینه با متن (اولویت بالا)
@@ -307,6 +290,7 @@ def add_expense_text(message):
         bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. مثال: 150 هزار ناهار", reply_markup=main_menu(message))
         return
     
+    # 🔴 FIX 3: منطق ایجاد دسته
     if exp["category"] not in data["categories"]:
         data["categories"].append(exp["category"])
         bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: {exp['category']}")
@@ -347,23 +331,38 @@ def undo_last_expense(message):
         bot.send_message(message.chat.id, "لیست تراکنش‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
-    last_expense_date = datetime.min
-    last_income_date = datetime.min
-    
-    if data["expenses"]:
-        last_expense_date = datetime.strptime(data["expenses"][-1]["date"], "%Y-%m-%d %H:%M:%S")
-    
-    if data["income"]:
-        last_income_date = datetime.strptime(data["income"][-1]["date"], "%Y-%m-%d %H:%M:%S")
+    # پیدا کردن آخرین آیتم بر اساس تاریخ
+    all_items = []
+    for item in data["expenses"]:
+        all_items.append((datetime.strptime(item["date"], "%Y-%m-%d %H:%M:%S"), "expense", item))
+    for item in data["income"]:
+        all_items.append((datetime.strptime(item["date"], "%Y-%m-%d %H:%M:%S"), "income", item))
+        
+    if not all_items:
+        bot.send_message(message.chat.id, "لیست تراکنش‌های شما خالی است.", reply_markup=main_menu(message))
+        return
 
-    if last_expense_date > last_income_date:
-        removed_item = data["expenses"].pop()
-        save_data()
-        bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {removed_item['amount']:,.0f} تومان در {removed_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
-    elif last_income_date > last_expense_date:
-        removed_item = data["income"].pop()
-        save_data()
-        bot.send_message(message.chat.id, f"✅ **آخرین درآمد حذف شد:** {removed_item['amount']:,.0f} تومان (منبع: {removed_item['source']}).", parse_mode='Markdown', reply_markup=main_menu(message))
+    all_items.sort(key=lambda x: x[0])
+    last_item = all_items[-1]
+    
+    removed_item = last_item[2]
+    item_type = last_item[1]
+
+    if item_type == "expense":
+        # پیدا کردن و حذف آیتم از لیست اصلی (با فرض اینکه هر تراکنش یکتاست)
+        try:
+            data["expenses"].remove(removed_item)
+            save_data()
+            bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {removed_item['amount']:,.0f} تومان در {removed_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
+        except ValueError:
+             bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
+    elif item_type == "income":
+        try:
+            data["income"].remove(removed_item)
+            save_data()
+            bot.send_message(message.chat.id, f"✅ **آخرین درآمد حذف شد:** {removed_item['amount']:,.0f} تومان (منبع: {removed_item['source']}).", parse_mode='Markdown', reply_markup=main_menu(message))
+        except ValueError:
+             bot.send_message(message.chat.id, "❌ خطا در حذف آیتم درآمد. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
     else:
         bot.send_message(message.chat.id, "خطا در تشخیص آخرین تراکنش.", reply_markup=main_menu(message))
 
@@ -393,7 +392,6 @@ def process_category_step(message):
         bot.send_message(message.chat.id, "این دسته‌بندی قبلاً موجود است.", reply_markup=main_menu(message))
 
 
-# ⚠️ اضافه کردن /setbudget و process_budget_step
 @bot.message_handler(commands=['setbudget'])
 def set_budget(message):
     msg = bot.send_message(message.chat.id, "لطفاً مبلغ بودجه ماهانه جدید را وارد کنید (مثال: 1000000 تومان):", 
@@ -407,7 +405,6 @@ def process_budget_step(message):
         return
         
     try:
-        # حذف کاراکترهای اضافی و تبدیل به عدد
         amount_text = message.text.replace("تومان", "").replace("تومن", "").replace(",", "").strip()
         amount = int(amount_text)
         
@@ -416,8 +413,6 @@ def process_budget_step(message):
             return
 
         BUDGET_MONTHLY = amount
-        # در ربات‌های واقعی، باید این مقدار در فایل داده‌ها ذخیره شود. 
-        # ما در اینجا برای سادگی، فقط متغیر سراسری را تغییر می‌دهیم.
         bot.send_message(message.chat.id, f"✅ بودجه ماهانه با موفقیت به **{BUDGET_MONTHLY:,.0f} تومان** تغییر یافت.", parse_mode='Markdown', reply_markup=main_menu(message))
         
     except ValueError:
@@ -429,50 +424,40 @@ def process_budget_step(message):
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
     global data
+    # حفظ دسته بندی های پیش فرض
     data = {"expenses": [], "income": [], "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"], "goals": [], "recurrences": []}
     save_data()
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.", reply_markup=main_menu(message))
 
 
-# 3. اصلاح /report (فیلتر تاریخ)
+# 3. اصلاح /report (فیلترهای تاریخ) 🔴 FIX 4: اضافه کردن فیلترهای جدید
 @bot.message_handler(commands=['report'])
 def report_start(message):
-    keyboard = types.InlineKeyboardMarkup()
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(types.InlineKeyboardButton("این ماه 📅", callback_data="report_month"))
-    keyboard.add(types.InlineKeyboardButton("۷ روز اخیر 🗓️", callback_data="report_week"))
+    keyboard.add(types.InlineKeyboardButton("۳ ماه اخیر 🗓️", callback_data="report_3month"))
+    keyboard.add(types.InlineKeyboardButton("۱۵ روز اخیر 📆", callback_data="report_15day"))
+    keyboard.add(types.InlineKeyboardButton("۷ روز اخیر ⏳", callback_data="report_week"))
     keyboard.add(types.InlineKeyboardButton("همه زمان‌ها 🌐", callback_data="report_all"))
     
     bot.send_message(message.chat.id, "لطفاً بازه زمانی گزارش را انتخاب کنید:", reply_markup=keyboard)
 
 
-# 4. قابلیت گزارش تاریخی بر اساس ماه (/history)
+# 4. حذف /history و ادغام در /report (مطابق FIX 4)
+# اما دکمه /history را در منو حفظ می‌کنیم و آن را به /report وصل می‌کنیم
 @bot.message_handler(commands=['history'])
 def history_start(message):
-    keyboard = types.InlineKeyboardMarkup()
-    for i in range(3):
-        date_obj = datetime.now().replace(day=1) - timedelta(days=i * 30)
-        month_name = date_obj.strftime("%B")
-        callback_data = f"history_{date_obj.year}_{date_obj.month}"
-        keyboard.add(types.InlineKeyboardButton(f"گزارش ماه {month_name}", callback_data=callback_data))
-    
-    bot.send_message(message.chat.id, "📜 گزارش ماهانه خود را انتخاب کنید:", reply_markup=keyboard)
+    # این تابع صرفاً برای هدایت کاربر از دکمه /history به منوی اصلی گزارش‌گیری است.
+    report_start(message)
 
 
-# 🚨 مدیریت Inline Keyboardها و رفع خطای TypeError
-@bot.callback_query_handler(func=lambda call: call.data.startswith('report_') or call.data.startswith('history_'))
+# مدیریت Inline Keyboardها
+@bot.callback_query_handler(func=lambda call: call.data.startswith('report_'))
 def handle_report_callback(call):
     bot.answer_callback_query(call.id, "در حال تولید گزارش...")
     
-    is_report = call.data.startswith('report_')
+    period = call.data.split('_')[1]
     
-    if is_report:
-        period = call.data.split('_')[1]
-    else:
-        parts = call.data.split('_')
-        year = int(parts[1])
-        month = int(parts[2])
-        period = 'history'
-        
     end_date = datetime.now()
     start_date = None
     period_name = ""
@@ -480,34 +465,37 @@ def handle_report_callback(call):
     if period == 'week':
         start_date = end_date - timedelta(days=7)
         period_name = "۷ روز اخیر"
+    elif period == '15day':
+        start_date = end_date - timedelta(days=15)
+        period_name = "۱۵ روز اخیر"
+    elif period == '3month':
+        start_date = end_date - timedelta(days=90)
+        period_name = "۳ ماه اخیر"
     elif period == 'month':
         start_date = end_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         period_name = "ماه جاری"
     elif period == 'all':
         start_date = datetime.min
         period_name = "همه زمان‌ها"
-    elif period == 'history':
-        start_date = datetime(year, month, 1)
-        next_month = start_date.replace(day=28) + timedelta(days=4)
-        end_date = next_month - timedelta(days=next_month.day)
-        period_name = f"ماه {month}/{year}"
 
     filtered_expenses = []
     for exp in data["expenses"]:
         try:
             exp_date = datetime.strptime(exp["date"], "%Y-%m-%d %H:%M:%S")
-            if exp_date >= start_date and exp_date <= end_date:
+            # اطمینان از فیلتر صحیح
+            if start_date <= exp_date <= end_date:
                 filtered_expenses.append(exp)
         except:
             continue
             
     report_text, total_spent, chart_path = generate_report(filtered_expenses, period_name, call.message)
     
-    # FIX: بررسی و تبدیل None به 0 برای جلوگیری از TypeError
+    # FIX: تبدیل None به 0 برای جلوگیری از TypeError
     if total_spent is None:
         total_spent = 0
     
-    if is_report and period != 'history':
+    # محاسبه ترازنامه برای تمام گزارش‌ها به جز 'all'
+    if period != 'all':
         total_income = sum([inc.get("amount", 0) for inc in data["income"]])
         net_balance = total_income - total_spent 
         
@@ -522,7 +510,13 @@ def handle_report_callback(call):
                 remaining = BUDGET_MONTHLY - total_spent
                 final_report += f"\n\n💡 **بودجه باقی‌مانده این ماه**: {remaining:,.0f} تومان"
     else:
+        # برای گزارش 'all'، فقط جمع کل هزینه‌ها را نشان می‌دهیم
+        total_income_all = sum([inc.get("amount", 0) for inc in data["income"]])
+        net_balance_all = total_income_all - total_spent
         final_report = report_text
+        final_report += f"\n\n💰 **مجموع درآمد (کل)**: {total_income_all:,.0f} تومان"
+        final_report += f"\n💸 **ترازنامه خالص (کل)**: {net_balance_all:,.0f} تومان"
+
 
     # ارسال گزارش و نمودار
     bot.edit_message_text(final_report, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=None)
@@ -536,138 +530,14 @@ def handle_report_callback(call):
             bot.send_message(call.message.chat.id, "❌ خطا در ارسال نمودار دایره‌ای.")
 
 
-# 1. قابلیت هدف‌گذاری (/goal)
-@bot.message_handler(commands=['goal'])
-def goal_start(message):
-    msg = bot.send_message(message.chat.id, "🎯 نام، مبلغ هدف و تعداد ماه‌های باقیمانده را وارد کنید (مثال: گوشی جدید 10000000 6):", 
-                           reply_markup=types.ReplyKeyboardRemove())
-    bot.register_next_step_handler(msg, process_goal_step)
-
-def process_goal_step(message):
-    if message.text and message.text.startswith('/'):
-        bot.send_message(message.chat.id, "❌ فرآیند هدف‌گذاری لغو شد.", reply_markup=main_menu(message))
-        return
-        
-    parts = message.text.split()
-    if len(parts) < 3 or not parts[-2].isdigit() or not parts[-1].isdigit():
-        bot.send_message(message.chat.id, "❌ فرمت اشتباه. مثال: گوشی جدید 10000000 6", reply_markup=main_menu(message))
-        return
-
-    try:
-        months = int(parts.pop())
-        amount = float(parts.pop())
-        name = " ".join(parts)
-        
-        target_date = (datetime.now() + timedelta(days=months * 30)).strftime("%Y-%m-%d")
-        
-        data["goals"].append({
-            "name": name, 
-            "amount": amount, 
-            "saved": 0, 
-            "target_date": target_date, 
-            "start_date": datetime.now().strftime("%Y-%m-%d")
-        })
-        save_data()
-        
-        required_monthly = amount / months if months > 0 else amount
-        
-        bot.send_message(message.chat.id, f"✅ هدف '{name}' تنظیم شد. برای رسیدن به آن تا {target_date}، باید ماهانه **{required_monthly:,.0f} تومان** پس‌انداز کنید.", parse_mode='Markdown', reply_markup=main_menu(message))
-    except Exception:
-        bot.send_message(message.chat.id, "❌ خطایی رخ داد.", reply_markup=main_menu(message))
+# ❌ حذف /goal و توابع مرتبط (مطابق FIX 2)
+# ❌ حذف /recur و توابع مرتبط (مطابق FIX 1)
 
 
-# 2. قابلیت هزینه‌های تکراری (/recur)
-@bot.message_handler(commands=['recur'])
-def recur_start(message):
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("ماهانه 🗓️", callback_data="recur_month"))
-    keyboard.add(types.InlineKeyboardButton("هفتگی 📅", callback_data="recur_week"))
-    
-    bot.send_message(message.chat.id, "🔁 دوره تکرار هزینه جدید را انتخاب کنید:", reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('recur_'))
-def handle_recur_callback(call):
-    bot.answer_callback_query(call.id)
-    frequency = "ماهانه" if call.data == "recur_month" else "هفتگی"
-    
-    msg = bot.send_message(call.message.chat.id, f"لطفاً نام، مبلغ و دسته‌بندی هزینه {frequency} را وارد کنید (مثال: اجاره 5000000 اجاره):", 
-                           reply_markup=types.ReplyKeyboardRemove())
-    bot.register_next_step_handler(msg, process_recur_step, frequency)
-
-def process_recur_step(message, frequency):
-    if message.text and message.text.startswith('/'):
-        bot.send_message(message.chat.id, "❌ فرآیند تکرار هزینه لغو شد.", reply_markup=main_menu(message))
-        return
-        
-    parts = message.text.split()
-    if len(parts) < 3 or not parts[-2].isdigit() or parts[-1] not in data["categories"]:
-        bot.send_message(message.chat.id, f"❌ فرمت اشتباه. مثال: اجاره 5000000 اجاره (دسته بندی باید موجود باشد)", reply_markup=main_menu(message))
-        return
-        
-    try:
-        category = parts.pop()
-        amount = float(parts.pop())
-        name = " ".join(parts)
-        
-        data["recurrences"].append({
-            "name": name, 
-            "amount": amount, 
-            "category": category, 
-            "frequency": frequency, 
-            "last_run": (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        })
-        save_data()
-        
-        bot.send_message(message.chat.id, f"✅ هزینه '{name}' به صورت {frequency} با موفقیت ثبت شد.", reply_markup=main_menu(message))
-    except Exception:
-        bot.send_message(message.chat.id, "❌ خطایی رخ داد.", reply_markup=main_menu(message))
-
-
-# 5. قابلیت خروجی CSV (/export)
-@bot.message_handler(commands=['export'])
-def export_data(message):
-    if not data["expenses"] and not data["income"]:
-        bot.send_message(message.chat.id, "هیچ داده‌ای برای خروجی گرفتن وجود ندارد.", reply_markup=main_menu(message))
-        return
-        
-    filename = "Financial_Report.csv"
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['نوع', 'مبلغ', 'دسته/منبع', 'یادداشت/توضیح', 'تگ‌ها', 'تاریخ']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        all_items = sorted(data["expenses"] + data["income"], key=lambda x: datetime.strptime(x["date"], "%Y-%m-%d %H:%M:%S"))
-        
-        for item in all_items:
-            row = {}
-            if 'category' in item:
-                row['نوع'] = 'هزینه'
-                row['دسته/منبع'] = item['category']
-                row['یادداشت/توضیح'] = item.get('note', '')
-            else:
-                row['نوع'] = 'درآمد'
-                row['دسته/منبع'] = item['source']
-                row['یادداشت/توضیح'] = ''
-            
-            row['مبلغ'] = item['amount']
-            row['تگ‌ها'] = ', '.join(item.get('tags', []))
-            row['تاریخ'] = item['date']
-            writer.writerow(row)
-
-    try:
-        with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption="📥 خروجی کامل داده‌ها (CSV)")
-    except Exception:
-        bot.send_message(message.chat.id, "❌ خطایی در ایجاد یا ارسال فایل رخ داد.")
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
-
-
+# 5. قابلیت پیشنهاد هوشمند (/tips) 🔴 FIX 5: نمایش پیام جدید در هر بار زدن
 @bot.message_handler(commands=['tips'])
 def give_economic_advice(message):
     total_spent_this_month = 0
-    cigs_spent = 0
     food_spent = 0
     
     start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -677,35 +547,36 @@ def give_economic_advice(message):
             exp_date = datetime.strptime(exp["date"], "%Y-%m-%d %H:%M:%S")
             if exp_date >= start_of_month:
                 total_spent_this_month += exp.get("amount", 0)
-                if exp.get("category") == "سیگار":
-                    cigs_spent += exp.get("amount", 0)
                 if exp.get("category") == "خوراک":
                     food_spent += exp.get("amount", 0)
         except:
             continue
             
-    advice_text = "💡 **پیشنهادات هوشمند اقتصادی برای شما:**\n\n"
+    advice_options = []
     
-    if cigs_spent > 50000:
-        advice_text += f"🚬 هزینه **سیگار** شما این ماه {cigs_spent:,.0f} تومان بوده است.\nبا کاهش این هزینه، علاوه بر **سالمتی**، می‌توانید ماهانه این مبلغ را **پس‌انداز** کنید.\n\n"
+    # پیام‌های شرطی
+    if total_spent_this_month > BUDGET_MONTHLY * 0.8:
+        advice_options.append("⚠️ **هشدار بودجه**: شما بیش از ۸۰٪ بودجه ماهانه را مصرف کرده‌اید! بهتر است تا پایان ماه هزینه‌های غیرضروری را قطع کنید.")
+    
+    if total_spent_this_month > 0 and food_spent / total_spent_this_month > 0.4:
+        advice_options.append("🍔 هزینه **خوراک** شما درصد بالایی از کل هزینه‌ها است. با پختن غذای خانگی به جای خرید از بیرون، می‌توانید ماهانه مبلغ قابل توجهی پس‌انداز کنید.")
+    
+    if total_spent_this_month > 0 and 'سایر' in [exp.get('category') for exp in data['expenses'] if datetime.strptime(exp['date'], "%Y-%m-%d %H:%M:%S") >= start_of_month]:
+        other_spent = sum([exp.get('amount', 0) for exp in data['expenses'] if exp.get('category') == 'سایر' and datetime.strptime(exp['date'], "%Y-%m-%d %H:%M:%S") >= start_of_month])
+        if other_spent > total_spent_this_month * 0.15:
+             advice_options.append(f"❓ **دسته‌بندی نامشخص**: {other_spent:,.0f} تومان از هزینه‌های شما در دسته **سایر** قرار گرفته است. سعی کنید دسته‌های دقیقتری بسازید تا مدیریت مالی بهتری داشته باشید.")
+             
+    # پیام‌های عمومی (اگر هیچ پیام شرطی فعال نشد)
+    if not advice_options:
+        advice_options.extend([
+            "💰 **قانون ۵۰/۳۰/۲۰**: ۵۰٪ درآمد برای نیازها، ۳۰٪ برای خواسته‌ها و ۲۰٪ برای پس‌انداز و بدهی.",
+            "💡 همیشه ۱۰٪ از درآمد خود را بلافاصله پس‌انداز کنید. این کار را به یک **هزینه ضروری** تبدیل کنید.",
+            "📅 **برنامه هفتگی**: در ابتدای هر هفته یک برنامه خرج کردن محدود تعیین کنید تا بودجه ماهانه از دست نرود."
+        ])
         
-    if total_spent_this_month > BUDGET_MONTHLY * 0.7:
-        advice_text += "⚠️ **هشدار بودجه**: شما ۷۰٪ از بودجه ماهانه خود را مصرف کرده‌اید. در روزهای باقیمانده، مراقب **هزینه‌های غیرضروری** باشید.\n\n"
-        
-    if food_spent > total_spent_this_month * 0.4 and total_spent_this_month > 0:
-        advice_text += "🍔 هزینه **خوراک** شما درصد بالایی از کل هزینه‌ها است. سعی کنید برای وعده‌های ناهار از **غذای خانگی** استفاده کنید تا هم **مقرون به صرفه** باشد و هم **سالم‌تر**.\n\n"
-        
-    if data["goals"]:
-        goal = data["goals"][0] 
-        # محاسبه ساده برای ماهانه مورد نیاز
-        remaining_months = max(1, (datetime.strptime(goal['target_date'], "%Y-%m-%d").year - datetime.now().year) * 12 + (datetime.strptime(goal['target_date'], "%Y-%m-%d").month - datetime.now().month))
-        needed_monthly = (goal['amount'] - goal['saved']) / remaining_months
-        
-        advice_text += f"🎯 **هدف شما ({goal['name']})**: شما نیاز دارید ماهانه {needed_monthly:,.0f} تومان پس‌انداز کنید. مطمئن شوید که بخشی از درآمدتان را به این هدف اختصاص می‌دهید.\n\n"
-        
-    if not data["goals"] and total_spent_this_month <= BUDGET_MONTHLY * 0.7:
-        advice_text += "✅ عملکرد شما خوب است! برای بهبود بیشتر، می‌توانید در پایان ماه، **۱۰٪ از درآمد خالص** خود را به طور خودکار به یک **حساب پس‌انداز بلندمدت** منتقل کنید.\n\n"
-        
+    advice_text = "💡 **پیشنهاد هوشمند اقتصادی:**\n\n"
+    advice_text += random.choice(advice_options) # انتخاب یک پیام تصادفی
+
     bot.send_message(message.chat.id, advice_text, parse_mode='Markdown', reply_markup=main_menu(message))
 
 
@@ -754,9 +625,12 @@ def process_filter_step(message):
     report_text += f"💰 **مجموع هزینه‌ها**: {total_spent:,.0f} تومان\n"
     report_text += "\n📝 **آخرین ۵ تراکنش**:\n"
     
-    for exp in filtered_expenses[-5:]:
+    # مطمئن می‌شویم که تاریخ به درستی نمایش داده شود
+    filtered_expenses.sort(key=lambda x: datetime.strptime(x["date"], "%Y-%m-%d %H:%M:%S"), reverse=True)
+    
+    for exp in filtered_expenses[:5]:
         report_text += f"  - {exp.get('amount', 0):,.0f} تومان ({exp.get('date', 'بدون تاریخ').split()[0]})"
-        if exp.get('note'):
+        if exp.get('note') and exp.get('note') != exp.get('category'):
              report_text += f" | {exp['note']}"
         if exp.get('tags'):
              report_text += f" | تگ: {', '.join(exp['tags'])}\n"
@@ -769,7 +643,7 @@ def process_filter_step(message):
 # --- اجرای ربات ---
 
 if __name__ == '__main__':
-    check_and_run_recurrences()
+    # ❌ حذف check_and_run_recurrences
     print("Bot started polling...")
     try:
         bot.polling(none_stop=True)
