@@ -1,32 +1,22 @@
-# استفاده از نسخه سبک پایتون
-FROM python:3.11-slim
+# 1. تعیین ایمیج پایه (استفاده از نسخه سبک پایتون)
+FROM python:3.10-slim
 
-# تنظیم متغیرهای محیطی
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# ایجاد دایرکتوری کاری در کانتینر
+# 2. تنظیم دایرکتوری کاری درون کانتینر
 WORKDIR /app
 
-# ---------------------------------------------------
-# نصب پکیج‌های سیستمی و فونت‌های فارسی
-# ---------------------------------------------------
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    fontconfig \
-    # نصب یک پکیج عمومی فونت که معمولاً شامل DejaVu Sans است
-    fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
+# 3. نصب FFmpeg و سایر وابستگی‌های سیستمی (برای اجرای pydub)
+# 'apt-get update' لیست پکیج‌ها را به‌روز می‌کند و 'apt-get install -y' FFmpeg و پیش‌نیازهای ساخت را نصب می‌کند.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-# کپی کردن فایل نیازمندی‌ها
-COPY requirements.txt /app/
+# 4. کپی کردن فایل‌های مورد نیاز از پروژه به کانتینر
+COPY requirements.txt .
+COPY main.py .
 
-# نصب پکیج‌های پایتون
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# 5. نصب وابستگی‌های پایتون از requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# کپی کردن باقی فایل‌های پروژه
-COPY . /app/
-
-# دستور اجرای ربات
+# 6. اجرای ربات
+# فرض می‌کنیم نقطه ورود (entrypoint) ربات شما فایل main.py است.
 CMD ["python", "main.py"]
