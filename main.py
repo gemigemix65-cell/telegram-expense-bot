@@ -3,7 +3,7 @@ from telebot import types
 import json
 import os
 import speech_recognition as sr
-from pydub import AudioSegment
+from pydub import AudioSegment, exceptions as pydub_exceptions
 import io
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
@@ -18,10 +18,7 @@ BUDGET_MONTHLY = 500000
 
 DEFAULT_DATA = {
     "expenses": [], 
-    "income": [], # نگهداری برای حفظ ساختار، اما استفاده نمی‌شود
     "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
-    "goals": [], 
-    "recurrences": []
 } 
 
 # --- تنظیمات Plotting ---
@@ -35,11 +32,8 @@ if os.path.exists(DATA_FILE):
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             loaded_data = json.load(f)
-            # فقط داده‌هایی که نیاز داریم را بارگذاری می‌کنیم.
             data["expenses"] = loaded_data.get("expenses", [])
             data["categories"] = loaded_data.get("categories", ["خوراک", "حمل و نقل", "تفریح", "سایر"])
-            data["income"] = loaded_data.get("income", []) # حفظ دیتاهای قبلی درآمد
-            
     except json.JSONDecodeError:
         print(f"Error reading {DATA_FILE}. Starting with default data.")
         pass 
@@ -54,13 +48,9 @@ def save_data():
         if "date" not in item:
             item["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # حذف داده‌های اضافی (مانند درآمد و اهداف) از فایل JSON
     data_to_save = {
         "expenses": data["expenses"],
         "categories": data["categories"],
-        "income": [], # برای اینکه در فایل ذخیره نشود
-        "goals": [],
-        "recurrences": []
     }
     
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -91,7 +81,6 @@ def parse_amount_category(text):
                 amount = int(word)
                 multiplier = 1
                 
-                # بررسی واحد (هزار، میلیون)
                 if i + 1 < len(words):
                     next_word = words[i + 1].lower()
                     if next_word in ["هزار", "هزار تومان", "هزارتومن"]:
@@ -109,32 +98,27 @@ def parse_amount_category(text):
                     
                 amount *= multiplier
                 
-                # متن باقی‌مانده برای دسته‌بندی و یادداشت
                 remaining_text = " ".join(words[amount_index + 1:]).strip()
                 
                 explicit_category = None
                 note = remaining_text
                 
-                # تلاش برای یافتن دسته‌بندی صریح در ابتدای متن باقیمانده
                 if remaining_text:
                     first_word_after_amount = remaining_text.split()[0]
                     if first_word_after_amount in data["categories"]:
                         explicit_category = first_word_after_amount
                         note = " ".join(remaining_text.split()[1:]).strip()
                         
-                # 🔴 منطق ساخت دسته جدید یا قرار دادن در "سایر"
+                # منطق ساخت دسته جدید یا قرار دادن در "سایر"
                 if explicit_category:
                     category = explicit_category
                 else:
-                    # اگر کاربر فقط مبلغ و یک کلمه دیگر داده است، آن را به عنوان دسته جدید می‌سازیم
                     if amount_index + 1 < len(words) and len(words[amount_index + 1:]) == 1:
-                        category = words[amount_index + 1] # ساخت دسته جدید
+                        category = words[amount_index + 1] 
                         note = category
                     elif remaining_text:
-                        # اگر متن دیگری داده، آن را یادداشت قرار می‌دهیم و دسته را سایر
                         category = "سایر" 
                     else:
-                        # اگر هیچ متن دیگری نداده، دسته "سایر"
                         category = "سایر"
                         note = category
 
@@ -143,7 +127,7 @@ def parse_amount_category(text):
                     
                 return {"amount": amount, "category": category, "note": note, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tags": tags}
                 
-                break # فقط اولین مبلغ را در نظر بگیریم
+                break 
 
     except Exception as e:
         print(f"Error parsing text: {e}")
@@ -159,24 +143,17 @@ def generate_report(expenses_list, period_name):
     
     for exp in expenses_list:
         if "amount" in exp and "category" in exp:
-            totals[exp["category"]] = totals.get("Total", 0) + exp["amount"]
             totals[exp["category"]] = totals.get(exp["category"], 0) + exp["amount"]
-        else:
-            totals["سایر"] = totals.get("سایر", 0) + exp.get("amount", 0)
-
 
     report_text = f"📊 گزارش هزینه‌ها در **{period_name}**:\n"
     for cat, total in sorted(totals.items(), key=lambda item: item[1], reverse=True):
-        if cat != "Total":
-            report_text += f"**{cat}**: {total:,.0f} تومان\n"
+        report_text += f"**{cat}**: {total:,.0f} تومان\n"
     
-    # مجموع را فقط یک بار محاسبه می‌کنیم
     total_spent = sum([exp.get("amount", 0) for exp in expenses_list])
 
     # --- نمودار دایره‌ای دسته‌بندی‌ها ---
     chart_path = None
-    # فیلتر کردن Total و آیتم‌های صفر
-    plot_totals = {k: v for k, v in totals.items() if k != "Total" and v > 0} 
+    plot_totals = {k: v for k, v in totals.items() if v > 0} 
     
     if plot_totals:
         plt.figure(figsize=(6,6))
@@ -197,7 +174,7 @@ def generate_report(expenses_list, period_name):
 def main_menu(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
-    # ❌ حذف /income، /history و /tips
+    # 🔴 FIX 1: حذف نهایی دکمه‌های ناخواسته
     buttons = [
         "/report 📊 گزارش کلی",
         "/filter 🔍 گزارش دسته‌ای",
@@ -227,21 +204,24 @@ def start(message):
                                       "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", reply_markup=keyboard)
 
 
-# 🚨 ثبت هزینه با ویس (اولویت بالا) 
+# 🚨 ثبت هزینه با ویس 🔴 FIX 2: مدیریت خطای صریح‌تر برای ffmpeg
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
     bot.send_message(message.chat.id, "در حال پردازش ویس...", reply_markup=types.ReplyKeyboardRemove())
     
-    # 1. دانلود فایل صوتی
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     
     temp_wav_path = "temp_voice.wav"
     
     try:
-        # 2. تبدیل ogg/oga به wav (سازگار با SpeechRecognition)
+        # 1. تبدیل ogg/oga به wav 
         audio = AudioSegment.from_file(io.BytesIO(downloaded_file), format="ogg")
         audio.export(temp_wav_path, format="wav")
+    except pydub_exceptions.CouldntFindFFmpeg:
+        print("FFMPEG NOT FOUND ERROR")
+        bot.reply_to(message, "❌ **خطای عدم نصب پیش‌نیاز (FFmpeg)**: برای تبدیل فایل صوتی تلگرام به متن، لازم است **FFmpeg** روی سیستم شما نصب و در PATH تعریف شده باشد.", reply_markup=main_menu(message))
+        return
     except Exception as e:
         print(f"Error in pydub processing: {e}")
         bot.reply_to(message, "❌ خطا در پردازش فایل صوتی (تبدیل فرمت).", reply_markup=main_menu(message))
@@ -250,9 +230,8 @@ def add_expense_voice(message):
     r = sr.Recognizer()
     text = ""
     try:
-        # 3. تشخیص گفتار
+        # 2. تشخیص گفتار
         with sr.AudioFile(temp_wav_path) as source:
-            # اعمال محدودیت زمانی برای ضبط و تشخیص
             audio_data = r.record(source, duration=10) 
             text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7) 
             
@@ -261,13 +240,14 @@ def add_expense_voice(message):
         return
     except Exception as e:
         print(f"Error in Speech Recognition: {e}")
-        bot.reply_to(message, "❌ خطا در تبدیل ویس به متن (احتمالاً صدای واضحی نبود یا در سرور گوگل خطایی رخ داد).", reply_markup=main_menu(message))
+        # این خطا معمولاً نشان‌دهنده کیفیت پایین صدا یا عدم تشخیص توسط گوگل است.
+        bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما برای گوگل واضح نبود یا فرمت ورودی نامناسب است.", reply_markup=main_menu(message))
         return
     finally:
         if os.path.exists(temp_wav_path):
             os.remove(temp_wav_path)
 
-    # 4. پردازش متن استخراج شده
+    # 3. پردازش متن استخراج شده
     exp = parse_amount_category(text)
     if exp and exp["amount"] > 0:
         
@@ -301,17 +281,13 @@ def add_expense_text(message):
     bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
-# ❌ حذف Handler های /income
-
-
 # 1. پیاده‌سازی حذف آخرین تراکنش /undo
 @bot.message_handler(commands=['undo'])
 def undo_last_expense(message):
     if not data["expenses"]:
-        bot.send_message(message.chat.id, "لیست تراکنش‌های شما خالی است.", reply_markup=main_menu(message))
+        bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
-    # پیدا کردن آخرین آیتم بر اساس تاریخ
     all_items = []
     for item in data["expenses"]:
         try:
@@ -320,16 +296,15 @@ def undo_last_expense(message):
             continue
         
     if not all_items:
-        bot.send_message(message.chat.id, "لیست تراکنش‌های شما خالی است.", reply_markup=main_menu(message))
+        bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
     all_items.sort(key=lambda x: x[0])
-    last_item = all_items[-1][1] # تراکنش اصلی
+    last_item = all_items[-1][1] 
     
     removed_item = last_item
 
     try:
-        # پیدا کردن و حذف آیتم از لیست اصلی
         data["expenses"].remove(removed_item)
         save_data()
         bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {removed_item['amount']:,.0f} تومان در {removed_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
@@ -394,10 +369,8 @@ def process_budget_step(message):
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
     global data
-    # پاکسازی کامل هزینه‌ها و فقط حفظ دسته بندی پیش فرض
     data["expenses"] = []
     data["categories"] = ["خوراک", "حمل و نقل", "تفریح", "سایر"]
-    data["income"] = [] # پاکسازی درآمد
     save_data()
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.", reply_markup=main_menu(message))
 
@@ -413,9 +386,6 @@ def report_start(message):
     keyboard.add(types.InlineKeyboardButton("همه زمان‌ها 🌐", callback_data="report_all"))
     
     bot.send_message(message.chat.id, "لطفاً بازه زمانی گزارش را انتخاب کنید:", reply_markup=keyboard)
-
-
-# ❌ حذف Handler /history
 
 
 # مدیریت Inline Keyboardها
@@ -449,7 +419,6 @@ def handle_report_callback(call):
     for exp in data["expenses"]:
         try:
             exp_date = datetime.strptime(exp["date"], "%Y-%m-%d %H:%M:%S")
-            # اطمینان از فیلتر صحیح
             if start_date <= exp_date <= end_date:
                 filtered_expenses.append(exp)
         except:
@@ -472,7 +441,6 @@ def handle_report_callback(call):
     final_report += f"\n\n**💸 مجموع هزینه‌ها در این بازه**: {total_spent:,.0f} تومان"
 
 
-    # ارسال گزارش و نمودار
     bot.edit_message_text(final_report, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=None)
     
     if chart_path:
@@ -482,9 +450,6 @@ def handle_report_callback(call):
             os.remove(chart_path)
         except Exception as e:
             bot.send_message(call.message.chat.id, "❌ خطا در ارسال نمودار دایره‌ای.")
-
-
-# ❌ حذف Handler /tips
 
 
 # گزارش فیلتر شده دسته‌بندی
@@ -532,7 +497,6 @@ def process_filter_step(message):
     report_text += f"💰 **مجموع هزینه‌ها**: {total_spent:,.0f} تومان\n"
     report_text += "\n📝 **آخرین ۵ تراکنش**:\n"
     
-    # مطمئن می‌شویم که تاریخ به درستی نمایش داده شود
     filtered_expenses.sort(key=lambda x: datetime.strptime(x["date"], "%Y-%m-%d %H:%M:%S"), reverse=True)
     
     for exp in filtered_expenses[:5]:
@@ -552,7 +516,6 @@ def process_filter_step(message):
 if __name__ == '__main__':
     print("Bot started polling...")
     try:
-        # برای بهبود پایداری در محیط‌های مختلف
         bot.polling(non_stop=True, interval=1) 
     except Exception as e:
         print(f"An error occurred during polling: {e}")
