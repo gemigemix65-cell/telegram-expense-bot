@@ -1,12 +1,6 @@
 pyTelegramBotAPI
-
-# ۲. برای تبدیل ویس (.oga) و پردازش گفتار
-pydub
+Flask
 SpeechRecognition
-
-# ۳. برای نمودارها و رندر تصاویر (به جای numpy/pandas)
+pydub
 matplotlib
-Pillow
-
-# ۴. ابزارهای کمکی
-requests 
+gunicorn
