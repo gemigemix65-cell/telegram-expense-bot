@@ -9,15 +9,15 @@ FROM python:3.10-slim-buster
 WORKDIR /app
 
 # ----------------------------------------
-# ۳. نصب پیش‌نیازهای سیستمی (FFmpeg) و پاکسازی
+# ۳. اصلاح فایل منابع APT و نصب (راه حل پایداری شبکه)
 # ----------------------------------------
-# جدا کردن مرحله update و install برای پایداری بیشتر
-RUN apt-get update
-# اگر apt-get update موفق نشود، کل فرآیند نصب متوقف می‌شود.
-# اکنون نصب FFmpeg و Build-Essential
-RUN apt-get install -y --no-install-recommends \
-    ffmpeg \
-    build-essential \
+RUN echo "deb http://deb.debian.org/debian buster main" > /etc/apt/sources.list \
+    && echo "deb http://deb.debian.org/debian buster-updates main" >> /etc/apt/sources.list \
+    && echo "deb http://security.debian.org/debian-security buster/updates main" >> /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,13 +26,11 @@ RUN apt-get install -y --no-install-recommends \
 # ----------------------------------------
 COPY requirements.txt .
 
-# نصب وابستگی‌های پایتون
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ----------------------------------------
 # ۵. حذف بسته‌های توسعه برای کوچک‌سازی ایمیج نهایی
 # ----------------------------------------
-# حذف build-essential و بسته‌های اضافه پس از نصب پکیج‌های پایتون 
 RUN apt-get update \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
