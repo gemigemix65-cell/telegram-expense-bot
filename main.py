@@ -1,5 +1,6 @@
-import telebot
+Import telebot
 from telebot import types
+from flask import Flask, request # ⬅️ اضافه شده برای مدیریت Webhook در هاست ابری
 import json
 import os
 import speech_recognition as sr
@@ -10,8 +11,14 @@ from datetime import datetime, timedelta
 from matplotlib import rcParams
 import csv
 
-# --- تنظیمات عمومی ---
-TOKEN = "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw"
+# ----------------------------------------
+#          *** تنظیمات عمومی ***
+# ----------------------------------------
+
+# 🚨 امنیت: توکن را از متغیر محیطی (Environment Variable) لیارا می‌خواند.
+# اگر در لیارا تنظیم نشود، از مقدار پیش‌فرض شما استفاده می‌کند.
+TOKEN = os.environ.get("BOT_TOKEN", "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw") 
+
 bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000 
@@ -174,7 +181,6 @@ def generate_report(expenses_list, period_name):
 def main_menu(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
-    # 🔴 FIX 1: حذف نهایی دکمه‌های ناخواسته
     buttons = [
         "/report 📊 گزارش کلی",
         "/filter 🔍 گزارش دسته‌ای",
@@ -204,7 +210,6 @@ def start(message):
                                       "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", reply_markup=keyboard)
 
 
-# 🚨 ثبت هزینه با ویس 🔴 FIX 2: مدیریت خطای صریح‌تر برای ffmpeg
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
     bot.send_message(message.chat.id, "در حال پردازش ویس...", reply_markup=types.ReplyKeyboardRemove())
@@ -262,7 +267,6 @@ def add_expense_voice(message):
         bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
-# 🚨 ثبت هزینه با متن (اولویت بالا)
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
     exp = parse_amount_category(message.text)
@@ -281,7 +285,6 @@ def add_expense_text(message):
     bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
-# 1. پیاده‌سازی حذف آخرین تراکنش /undo
 @bot.message_handler(commands=['undo'])
 def undo_last_expense(message):
     if not data["expenses"]:
@@ -312,7 +315,6 @@ def undo_last_expense(message):
          bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
-# اصلاح /addcat
 @bot.message_handler(commands=['addcat'])
 def add_category(message):
     msg = bot.send_message(message.chat.id, "لطفاً نام دسته‌بندی جدید را وارد کنید (مثال: پوشاک):", 
@@ -375,7 +377,6 @@ def clear_data(message):
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.", reply_markup=main_menu(message))
 
 
-# 3. اصلاح /report (فیلترهای تاریخ)
 @bot.message_handler(commands=['report'])
 def report_start(message):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -388,7 +389,6 @@ def report_start(message):
     bot.send_message(message.chat.id, "لطفاً بازه زمانی گزارش را انتخاب کنید:", reply_markup=keyboard)
 
 
-# مدیریت Inline Keyboardها
 @bot.callback_query_handler(func=lambda call: call.data.startswith('report_'))
 def handle_report_callback(call):
     bot.answer_callback_query(call.id, "در حال تولید گزارش...")
@@ -452,7 +452,6 @@ def handle_report_callback(call):
             bot.send_message(call.message.chat.id, "❌ خطا در ارسال نمودار دایره‌ای.")
 
 
-# گزارش فیلتر شده دسته‌بندی
 @bot.message_handler(commands=['filter'])
 def filter_report(message):
     if not data["expenses"]:
@@ -511,11 +510,43 @@ def process_filter_step(message):
     bot.send_message(message.chat.id, report_text, parse_mode='Markdown', reply_markup=main_menu(message))
 
 
-# --- اجرای ربات ---
+# ----------------------------------------
+#          *** اجرای ربات در لیارا (Webhook) ***
+# ----------------------------------------
+
+# 🚨 تنظیمات مورد نیاز برای لیارا 🚨
+# باید در پنل لیارا در بخش متغیرهای محیطی تنظیم شوند.
+APP_NAME = os.environ.get("APP_NAME", "my-telegram-bot") 
+PORT = int(os.environ.get('PORT', 3000))
+
+WEBHOOK_URL_BASE = f"https://{APP_NAME}.liara.run" 
+WEBHOOK_URL_PATH = f"/{TOKEN}" 
+
+# راه‌اندازی سرور Flask
+server = Flask(__name__)
+
+# مسیر Webhook برای دریافت پیام‌های تلگرام
+@server.route(WEBHOOK_URL_PATH, methods=['POST'])
+def get_message():
+    # پردازش به‌روزرسانی (Update) از تلگرام
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = types.Update.de_json(json_string) 
+        bot.process_new_updates([update])
+        return "OK", 200
+    return "Error", 400
 
 if __name__ == '__main__':
-    print("Bot started polling...")
-    try:
-        bot.polling(non_stop=True, interval=1) 
-    except Exception as e:
-        print(f"An error occurred during polling: {e}")
+    if not TOKEN or not APP_NAME:
+        print("خطا: BOT_TOKEN یا APP_NAME تنظیم نشده است. ربات راه‌اندازی نشد.")
+    else:
+        # ۱. حذف Webhookهای قدیمی 
+        bot.remove_webhook()
+        
+        # ۲. تنظیم Webhook جدید روی تلگرام
+        bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
+        
+        print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
+        
+        # ۳. اجرای سرور Flask
+        server.run(host="0.0.0.0", port=PORT)
