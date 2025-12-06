@@ -1,6 +1,6 @@
-Import telebot
+import telebot
 from telebot import types
-from flask import Flask, request # ⬅️ اضافه شده برای مدیریت Webhook در هاست ابری
+from flask import Flask, request
 import json
 import os
 import speech_recognition as sr
@@ -11,22 +11,21 @@ from datetime import datetime, timedelta
 from matplotlib import rcParams
 import csv
 
+# 🚀 اضافه شدن SDK Gemini
+import google.genai as genai 
+from google.genai import types
+
 # ----------------------------------------
-#          *** تنظیمات عمومی ***
+#           *** تنظیمات عمومی و AI ***
 # ----------------------------------------
 
-# 🚨 امنیت: توکن را از متغیر محیطی (Environment Variable) لیارا می‌خواند.
-# اگر در لیارا تنظیم نشود، از مقدار پیش‌فرض شما استفاده می‌کند.
-TOKEN = os.environ.get("BOT_TOKEN", "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw") 
+# 🚨 امنیت: توکن‌ها را از متغیر محیطی (Environment Variable) لیارا می‌خواند.
+TOKEN = os.environ.get("BOT_TOKEN", "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 
 bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000 
-
-DEFAULT_DATA = {
-    "expenses": [], 
-    "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
-} 
 
 # --- تنظیمات Plotting ---
 rcParams['font.family'] = 'DejaVu Sans'
@@ -34,6 +33,11 @@ plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False 
 
 # --- بارگذاری ایمن داده‌ها ---
+DEFAULT_DATA = {
+    "expenses": [], 
+    "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
+} 
+
 data = DEFAULT_DATA.copy() 
 if os.path.exists(DATA_FILE):
     try:
@@ -44,9 +48,71 @@ if os.path.exists(DATA_FILE):
     except json.JSONDecodeError:
         print(f"Error reading {DATA_FILE}. Starting with default data.")
         pass 
+        
+# ----------------------------------------
+#           *** Agent هوشمند Gemini ***
+# ----------------------------------------
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
+
+SMART_AGENT_SYSTEM_PROMPT = """
+شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
+خروجی شما باید یک JSON Payload باشد که شامل:
+- 'amount': مبلغ هزینه (به تومان، فقط عدد، بدون کاما یا واحد پول).
+- 'category': دسته‌بندی اصلی هزینه (مثال: 'خوراک', 'حمل و نقل', 'تفریح'). اگر مشخص نبود، 'سایر' بگذارید.
+- 'note': توضیحات یا یادداشت کامل تراکنش.
+- 'tags': لیست تگ‌های موجود در متن (کلماتی که با # شروع می‌شوند، بدون #).
+
+اگر مبلغ یافت نشد، 'amount' را صفر بگذارید.
+"""
+
+def smart_parse_amount_category(text):
+    """استخراج مبلغ، دسته و یادداشت با استفاده از Gemini Agent."""
+    if not GEMINI_API_KEY:
+        # اگر کلید API تنظیم نشده، از ادامه خودداری می‌کند.
+        return None 
+
+    try:
+        # فراخوانی Agent (Gemini 2.5 Flash رایگان)
+        response = genai.client.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=[text],
+            config=types.GenerateContentConfig(
+                system_instruction=SMART_AGENT_SYSTEM_PROMPT,
+                response_mime_type="application/json"
+            )
+        )
+        
+        # تحلیل پاسخ JSON
+        result = json.loads(response.text)
+        
+        # نرمال‌سازی خروجی
+        amount = int(result.get("amount", 0))
+        category = result.get("category", "سایر")
+        note = result.get("note", category)
+        tags = result.get("tags", [])
+        
+        return {
+            "amount": amount,
+            "category": category,
+            "note": note,
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+            "tags": tags
+        }
+
+    except json.JSONDecodeError:
+        print(f"Agent did not return valid JSON: {response.text}")
+        return None
+    except Exception as e:
+        print(f"Gemini API Error in smart_parse: {e}")
+        return None
+
 
 # ----------------------------------------
-#          *** توابع کمکی ***
+#           *** توابع کمکی (اصلاح شده) ***
 # ----------------------------------------
 
 def save_data():
@@ -63,83 +129,8 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data_to_save, f, ensure_ascii=False, indent=4)
 
-def parse_amount_category(text):
-    """متن را به مبلغ، دسته‌بندی و تگ‌ها تفکیک می‌کند (فقط برای هزینه)."""
-    text = text.replace("تومن", "").replace("ریال", "").replace(",", "").strip()
-    words = text.split()
-    if not words:
-        return None
-
-    try:
-        amount = 0
-        tags = []
-        
-        temp_words = []
-        for word in words:
-            if word.startswith('#'):
-                tags.append(word[1:])
-            else:
-                temp_words.append(word)
-        words = temp_words
-        
-        amount_index = -1
-        for i, word in enumerate(words):
-            if word.isdigit():
-                amount = int(word)
-                multiplier = 1
-                
-                if i + 1 < len(words):
-                    next_word = words[i + 1].lower()
-                    if next_word in ["هزار", "هزار تومان", "هزارتومن"]:
-                        multiplier = 1000
-                        amount_index = i + 1
-                    elif next_word in ["میلیون", "ملیون"]:
-                        multiplier = 1000000
-                        amount_index = i + 1
-                    elif next_word in ["تومان", "تومن", "ریال"]:
-                        amount_index = i + 1
-                    else:
-                        amount_index = i
-                else:
-                    amount_index = i
-                    
-                amount *= multiplier
-                
-                remaining_text = " ".join(words[amount_index + 1:]).strip()
-                
-                explicit_category = None
-                note = remaining_text
-                
-                if remaining_text:
-                    first_word_after_amount = remaining_text.split()[0]
-                    if first_word_after_amount in data["categories"]:
-                        explicit_category = first_word_after_amount
-                        note = " ".join(remaining_text.split()[1:]).strip()
-                        
-                # منطق ساخت دسته جدید یا قرار دادن در "سایر"
-                if explicit_category:
-                    category = explicit_category
-                else:
-                    if amount_index + 1 < len(words) and len(words[amount_index + 1:]) == 1:
-                        category = words[amount_index + 1] 
-                        note = category
-                    elif remaining_text:
-                        category = "سایر" 
-                    else:
-                        category = "سایر"
-                        note = category
-
-                if not note:
-                    note = category
-                    
-                return {"amount": amount, "category": category, "note": note, "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tags": tags}
-                
-                break 
-
-    except Exception as e:
-        print(f"Error parsing text: {e}")
-        return None
-    return None
+# 🚨 تابع parse_amount_category قدیمی حذف شد، زیرا از Agent هوشمند استفاده می‌کنیم.
+# ... (توابع generate_report و main_menu و سایر توابع کمکی شما بدون تغییر باقی می‌مانند)
 
 def generate_report(expenses_list, period_name):
     """تابع تولید گزارش."""
@@ -200,89 +191,16 @@ def main_menu(message):
     return keyboard
 
 # ----------------------------------------
-#           *** Handlers ***
+#            *** Handlers (هوشمند شده) ***
 # ----------------------------------------
+
+# ... (کدهای handlers قدیمی مانند /start، /undo، /addcat، /setbudget، /clear، /report، /filter را اینجا قرار دهید)
 
 @bot.message_handler(commands=['start'])
 def start(message):
     keyboard = main_menu(message)
     bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
-                                      "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", reply_markup=keyboard)
-
-
-@bot.message_handler(content_types=['voice'])
-def add_expense_voice(message):
-    bot.send_message(message.chat.id, "در حال پردازش ویس...", reply_markup=types.ReplyKeyboardRemove())
-    
-    file_info = bot.get_file(message.voice.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    
-    temp_wav_path = "temp_voice.wav"
-    
-    try:
-        # 1. تبدیل ogg/oga به wav 
-        audio = AudioSegment.from_file(io.BytesIO(downloaded_file), format="ogg")
-        audio.export(temp_wav_path, format="wav")
-    except pydub_exceptions.CouldntFindFFmpeg:
-        print("FFMPEG NOT FOUND ERROR")
-        bot.reply_to(message, "❌ **خطای عدم نصب پیش‌نیاز (FFmpeg)**: برای تبدیل فایل صوتی تلگرام به متن، لازم است **FFmpeg** روی سیستم شما نصب و در PATH تعریف شده باشد.", reply_markup=main_menu(message))
-        return
-    except Exception as e:
-        print(f"Error in pydub processing: {e}")
-        bot.reply_to(message, "❌ خطا در پردازش فایل صوتی (تبدیل فرمت).", reply_markup=main_menu(message))
-        return
-
-    r = sr.Recognizer()
-    text = ""
-    try:
-        # 2. تشخیص گفتار
-        with sr.AudioFile(temp_wav_path) as source:
-            audio_data = r.record(source, duration=10) 
-            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7) 
-            
-    except sr.WaitTimeoutError:
-        bot.reply_to(message, "❌ تشخیص گفتار بیشتر از حد مجاز (۷ ثانیه) طول کشید. لطفاً دوباره و واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
-        return
-    except Exception as e:
-        print(f"Error in Speech Recognition: {e}")
-        # این خطا معمولاً نشان‌دهنده کیفیت پایین صدا یا عدم تشخیص توسط گوگل است.
-        bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما برای گوگل واضح نبود یا فرمت ورودی نامناسب است.", reply_markup=main_menu(message))
-        return
-    finally:
-        if os.path.exists(temp_wav_path):
-            os.remove(temp_wav_path)
-
-    # 3. پردازش متن استخراج شده
-    exp = parse_amount_category(text)
-    if exp and exp["amount"] > 0:
-        
-        if exp["category"] not in data["categories"]:
-            data["categories"].append(exp["category"])
-            bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: **{exp['category']}**", parse_mode='Markdown')
-            
-        data["expenses"].append(exp)
-        save_data()
-        bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
-    else:
-        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
-
-
-@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
-def add_expense_text(message):
-    exp = parse_amount_category(message.text)
-    
-    if not exp or exp["amount"] == 0:
-        bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. مثال: 150 هزار ناهار", reply_markup=main_menu(message))
-        return
-    
-    if exp["category"] not in data["categories"]:
-        data["categories"].append(exp["category"])
-        bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: **{exp['category']}**", parse_mode='Markdown')
-        
-    data["expenses"].append(exp)
-    save_data()
-    
-    bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
+                                     "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", reply_markup=keyboard)
 
 
 @bot.message_handler(commands=['undo'])
@@ -297,7 +215,7 @@ def undo_last_expense(message):
             all_items.append((datetime.strptime(item["date"], "%Y-%m-%d %H:%M:%S"), item))
         except:
             continue
-        
+            
     if not all_items:
         bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
@@ -312,13 +230,13 @@ def undo_last_expense(message):
         save_data()
         bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {removed_item['amount']:,.0f} تومان در {removed_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
     except ValueError:
-         bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
+           bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
 @bot.message_handler(commands=['addcat'])
 def add_category(message):
     msg = bot.send_message(message.chat.id, "لطفاً نام دسته‌بندی جدید را وارد کنید (مثال: پوشاک):", 
-                           reply_markup=types.ReplyKeyboardRemove())
+                             reply_markup=types.ReplyKeyboardRemove())
     bot.register_next_step_handler(msg, process_category_step)
 
 def process_category_step(message):
@@ -342,7 +260,7 @@ def process_category_step(message):
 @bot.message_handler(commands=['setbudget'])
 def set_budget(message):
     msg = bot.send_message(message.chat.id, "لطفاً مبلغ بودجه ماهانه جدید را وارد کنید (مثال: 1000000 تومان):", 
-                           reply_markup=types.ReplyKeyboardRemove())
+                             reply_markup=types.ReplyKeyboardRemove())
     bot.register_next_step_handler(msg, process_budget_step)
 
 def process_budget_step(message):
@@ -499,7 +417,7 @@ def process_filter_step(message):
     filtered_expenses.sort(key=lambda x: datetime.strptime(x["date"], "%Y-%m-%d %H:%M:%S"), reverse=True)
     
     for exp in filtered_expenses[:5]:
-        report_text += f"  - {exp.get('amount', 0):,.0f} تومان ({exp.get('date', 'بدون تاریخ').split()[0]})"
+        report_text += f"  - {exp.get('amount', 0):,.0f} تومان ({exp.get('date', 'بدون تاریخ').split()[0]})"
         if exp.get('note') and exp.get('note') != exp.get('category'):
              report_text += f" | {exp['note']}"
         if exp.get('tags'):
@@ -509,26 +427,103 @@ def process_filter_step(message):
         
     bot.send_message(message.chat.id, report_text, parse_mode='Markdown', reply_markup=main_menu(message))
 
+# ----------------------------------------
+#           *** Handler برای ویس (Voice) ***
+# ----------------------------------------
+
+@bot.message_handler(content_types=['voice'])
+def add_expense_voice(message):
+    if not GEMINI_API_KEY:
+        bot.send_message(message.chat.id, "⚠️ **خطا:** کلید GEMINI API تنظیم نشده. نمی‌توانم ویس را پردازش کنم.", reply_markup=main_menu(message))
+        return
+        
+    bot.send_message(message.chat.id, "در حال پردازش ویس و تحلیل هوشمند...", reply_markup=types.ReplyKeyboardRemove())
+    
+    file_info = bot.get_file(message.voice.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    
+    temp_wav_path = "temp_voice.wav"
+    text = ""
+    
+    try:
+        # 1. تبدیل ogg/oga به wav 
+        audio = AudioSegment.from_file(io.BytesIO(downloaded_file), format="ogg")
+        audio.export(temp_wav_path, format="wav")
+        
+        # 2. تشخیص گفتار
+        r = sr.Recognizer()
+        with sr.AudioFile(temp_wav_path) as source:
+            audio_data = r.record(source, duration=10) 
+            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7)
+            
+    except pydub_exceptions.CouldntFindFFmpeg:
+        bot.reply_to(message, "❌ **خطای عدم نصب پیش‌نیاز (FFmpeg)**: برای تبدیل فایل صوتی تلگرام به متن، لازم است **FFmpeg** روی سیستم شما نصب باشد.", reply_markup=main_menu(message))
+        return
+    except Exception as e:
+        print(f"Error in Voice Processing: {e}")
+        bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما واضح نبود.", reply_markup=main_menu(message))
+        return
+    finally:
+        if os.path.exists(temp_wav_path):
+            os.remove(temp_wav_path)
+
+    # 3. پردازش متن استخراج شده با Agent جدید
+    exp = smart_parse_amount_category(text)
+    
+    if exp and exp["amount"] > 0:
+        if exp["category"] not in data["categories"]:
+            data["categories"].append(exp["category"])
+            bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: **{exp['category']}**", parse_mode='Markdown')
+            
+        data["expenses"].append(exp)
+        save_data()
+        bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
+    else:
+        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
+
 
 # ----------------------------------------
-#          *** اجرای ربات در لیارا (Webhook) ***
+#           *** Handler برای متن (Text) ***
 # ----------------------------------------
 
-# 🚨 تنظیمات مورد نیاز برای لیارا 🚨
-# باید در پنل لیارا در بخش متغیرهای محیطی تنظیم شوند.
+@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
+def add_expense_text(message):
+    
+    exp = smart_parse_amount_category(message.text)
+    
+    if not exp:
+        # اگر GEMINI_API_KEY تنظیم نشده باشد
+        bot.reply_to(message, "❌ خطا: سرویس هوشمند غیرفعال است یا ورودی نامعتبر.", reply_markup=main_menu(message))
+        return
+    
+    if exp["amount"] == 0:
+        bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. (مثال: 150 هزار ناهار رستوران #تولد)", reply_markup=main_menu(message))
+        return
+        
+    if exp["category"] not in data["categories"]:
+        data["categories"].append(exp["category"])
+        bot.send_message(message.chat.id, f"دسته‌بندی جدید ساخته شد: **{exp['category']}**", parse_mode='Markdown')
+        
+    data["expenses"].append(exp)
+    save_data()
+    
+    bot.reply_to(message, f"✅ هزینه ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
+
+
+# ----------------------------------------
+#           *** اجرای ربات در لیارا (Webhook) ***
+# ----------------------------------------
+
 APP_NAME = os.environ.get("APP_NAME", "my-telegram-bot") 
 PORT = int(os.environ.get('PORT', 3000))
 
 WEBHOOK_URL_BASE = f"https://{APP_NAME}.liara.run" 
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 
-# راه‌اندازی سرور Flask
 server = Flask(__name__)
 
-# مسیر Webhook برای دریافت پیام‌های تلگرام
 @server.route(WEBHOOK_URL_PATH, methods=['POST'])
 def get_message():
-    # پردازش به‌روزرسانی (Update) از تلگرام
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = types.Update.de_json(json_string) 
@@ -540,13 +535,9 @@ if __name__ == '__main__':
     if not TOKEN or not APP_NAME:
         print("خطا: BOT_TOKEN یا APP_NAME تنظیم نشده است. ربات راه‌اندازی نشد.")
     else:
-        # ۱. حذف Webhookهای قدیمی 
         bot.remove_webhook()
-        
-        # ۲. تنظیم Webhook جدید روی تلگرام
         bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
         
         print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
         
-        # ۳. اجرای سرور Flask
         server.run(host="0.0.0.0", port=PORT)
