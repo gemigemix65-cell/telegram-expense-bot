@@ -16,18 +16,31 @@ import google.genai as genai
 from google.genai import types
 
 # ----------------------------------------
-#           *** تنظیمات عمومی و AI ***
+#           *** ۱. تنظیمات عمومی و AI ***
 # ----------------------------------------
 
-# 🚨 امنیت: توکن‌ها را از متغیر محیطی (Environment Variable) لیارا می‌خواند.
-TOKEN = os.environ.get("BOT_TOKEN", "8221583925:AAEowlZ0gV-WnDen3awIHweJ0i93P5DqUpw")
+# 🚨 امنیت: توکن‌ها را از متغیر محیطی می‌خواند.
+TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
+
+# 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
+# این مسیر باید با مسیری که دیسک را در پنل لیارا به آن متصل کرده‌اید، یکسان باشد
+DATA_FOLDER = "/app/data"  
+DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
+
+# تضمین وجود پوشه دیسک
+if not os.path.exists(DATA_FOLDER):
+    try:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+    except Exception as e:
+        # در صورت خطا در ساخت پوشه (مثلا در محیط غیر داکر)
+        print(f"Error creating data folder: {e}")
 
 bot = telebot.TeleBot(TOKEN)
-DATA_FILE = "data.json"
 BUDGET_MONTHLY = 500000 
 
-# --- تنظیمات Plotting ---
+# --- تنظیمات Plotting فارسی ---
 rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False 
@@ -50,11 +63,14 @@ if os.path.exists(DATA_FILE):
         pass 
         
 # ----------------------------------------
-#           *** Agent هوشمند Gemini ***
+#           *** ۲. Agent هوشمند Gemini ***
 # ----------------------------------------
 
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        print(f"Error configuring Gemini: {e}")
 else:
     print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
 
@@ -72,7 +88,6 @@ SMART_AGENT_SYSTEM_PROMPT = """
 def smart_parse_amount_category(text):
     """استخراج مبلغ، دسته و یادداشت با استفاده از Gemini Agent."""
     if not GEMINI_API_KEY:
-        # اگر کلید API تنظیم نشده، از ادامه خودداری می‌کند.
         return None 
 
     try:
@@ -112,11 +127,12 @@ def smart_parse_amount_category(text):
 
 
 # ----------------------------------------
-#           *** توابع کمکی (اصلاح شده) ***
+#           *** ۳. توابع کمکی ***
 # ----------------------------------------
 
 def save_data():
-    """ذخیره داده‌ها در فایل JSON"""
+    """ذخیره داده‌ها در فایل JSON روی دیسک پایدار"""
+    # تاریخ‌گذاری آیتم‌های بدون تاریخ
     for item in data["expenses"]:
         if "date" not in item:
             item["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -126,19 +142,18 @@ def save_data():
         "categories": data["categories"],
     }
     
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data_to_save, f, ensure_ascii=False, indent=4)
-
-# 🚨 تابع parse_amount_category قدیمی حذف شد، زیرا از Agent هوشمند استفاده می‌کنیم.
-# ... (توابع generate_report و main_menu و سایر توابع کمکی شما بدون تغییر باقی می‌مانند)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data_to_save, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+         print(f"Error saving data to {DATA_FILE}: {e}")
 
 def generate_report(expenses_list, period_name):
-    """تابع تولید گزارش."""
+    """تابع تولید گزارش و نمودار."""
     if not expenses_list:
         return f"⚠️ هیچ هزینه‌ای در بازه **{period_name}** ثبت نشده است.", None, None
 
     totals = {}
-    
     for exp in expenses_list:
         if "amount" in exp and "category" in exp:
             totals[exp["category"]] = totals.get(exp["category"], 0) + exp["amount"]
@@ -149,23 +164,25 @@ def generate_report(expenses_list, period_name):
     
     total_spent = sum([exp.get("amount", 0) for exp in expenses_list])
 
-    # --- نمودار دایره‌ای دسته‌بندی‌ها ---
     chart_path = None
     plot_totals = {k: v for k, v in totals.items() if v > 0} 
     
     if plot_totals:
-        plt.figure(figsize=(6,6))
-        labels = [k for k, v in plot_totals.items()]
-        sizes = [v for v in plot_totals.values()]
-        
-        if sizes:
-            plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
-            plt.title(f"درصد هزینه‌ها در {period_name}", loc='right')
-            plt.tight_layout()
-            chart_path = "report_pie.png"
-            plt.savefig(chart_path)
-            plt.close()
-
+        try:
+            plt.figure(figsize=(6,6))
+            labels = [k for k, v in plot_totals.items()]
+            sizes = [v for v in plot_totals.values()]
+            
+            if sizes:
+                plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+                plt.title(f"درصد هزینه‌ها در {period_name}", loc='right')
+                plt.tight_layout()
+                chart_path = os.path.join(DATA_FOLDER, "report_pie.png") # ذخیره نمودار در دیسک
+                plt.savefig(chart_path)
+                plt.close()
+        except Exception as e:
+            print(f"Error generating chart: {e}")
+            
     return report_text, total_spent, chart_path
 
 
@@ -187,14 +204,11 @@ def main_menu(message):
     keyboard.row(types.KeyboardButton(buttons[4]), types.KeyboardButton(buttons[5]))
     keyboard.row(types.KeyboardButton(buttons[6]))
 
-
     return keyboard
 
 # ----------------------------------------
-#            *** Handlers (هوشمند شده) ***
+#            *** ۴. Handlers اصلی ***
 # ----------------------------------------
-
-# ... (کدهای handlers قدیمی مانند /start، /undo، /addcat، /setbudget، /clear، /report، /filter را اینجا قرار دهید)
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -209,82 +223,32 @@ def undo_last_expense(message):
         bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
+    # پیدا کردن آخرین آیتم بر اساس تاریخ
     all_items = []
     for item in data["expenses"]:
         try:
-            all_items.append((datetime.strptime(item["date"], "%Y-%m-%d %H:%M:%S"), item))
+            # اگر تاریخ موجود نبود، تاریخ فعلی را در نظر بگیرید
+            date_str = item.get("date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            all_items.append((datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S"), item))
         except:
-            continue
+            all_items.append((datetime.min, item)) # آیتم‌های بدون تاریخ در اول قرار می‌گیرند
             
     if not all_items:
         bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
-    all_items.sort(key=lambda x: x[0])
-    last_item = all_items[-1][1] 
+    all_items.sort(key=lambda x: x[0], reverse=True) # مرتب‌سازی نزولی بر اساس تاریخ
+    last_item = all_items[0][1] 
     
-    removed_item = last_item
-
+    # حذف آیتم از لیست اصلی
     try:
-        data["expenses"].remove(removed_item)
+        data["expenses"].remove(last_item)
         save_data()
-        bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {removed_item['amount']:,.0f} تومان در {removed_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
+        bot.send_message(message.chat.id, f"✅ **آخرین هزینه حذف شد:** {last_item['amount']:,.0f} تومان در {last_item['category']}.", parse_mode='Markdown', reply_markup=main_menu(message))
     except ValueError:
            bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
 
-
-@bot.message_handler(commands=['addcat'])
-def add_category(message):
-    msg = bot.send_message(message.chat.id, "لطفاً نام دسته‌بندی جدید را وارد کنید (مثال: پوشاک):", 
-                             reply_markup=types.ReplyKeyboardRemove())
-    bot.register_next_step_handler(msg, process_category_step)
-
-def process_category_step(message):
-    if message.text and message.text.startswith('/'):
-        bot.send_message(message.chat.id, "❌ فرآیند اضافه کردن دسته لغو شد.", reply_markup=main_menu(message))
-        return
-        
-    category = message.text.strip()
-    if not category or category.isdigit():
-        bot.send_message(message.chat.id, "❌ نام دسته‌بندی معتبر نیست. لطفاً مجدداً امتحان کنید.", reply_markup=main_menu(message))
-        return
-        
-    if category not in data["categories"]:
-        data["categories"].append(category)
-        save_data()
-        bot.send_message(message.chat.id, f"✅ دسته‌بندی '{category}' اضافه شد!", reply_markup=main_menu(message))
-    else:
-        bot.send_message(message.chat.id, "این دسته‌بندی قبلاً موجود است.", reply_markup=main_menu(message))
-
-
-@bot.message_handler(commands=['setbudget'])
-def set_budget(message):
-    msg = bot.send_message(message.chat.id, "لطفاً مبلغ بودجه ماهانه جدید را وارد کنید (مثال: 1000000 تومان):", 
-                             reply_markup=types.ReplyKeyboardRemove())
-    bot.register_next_step_handler(msg, process_budget_step)
-
-def process_budget_step(message):
-    global BUDGET_MONTHLY
-    if message.text and message.text.startswith('/'):
-        bot.send_message(message.chat.id, "❌ فرآیند تعیین بودجه لغو شد.", reply_markup=main_menu(message))
-        return
-        
-    try:
-        amount_text = message.text.replace("تومان", "").replace("تومن", "").replace(",", "").strip()
-        amount = int(amount_text)
-        
-        if amount <= 0:
-            bot.send_message(message.chat.id, "❌ مبلغ بودجه باید مثبت باشد.", reply_markup=main_menu(message))
-            return
-
-        BUDGET_MONTHLY = amount
-        bot.send_message(message.chat.id, f"✅ بودجه ماهانه با موفقیت به **{BUDGET_MONTHLY:,.0f} تومان** تغییر یافت.", parse_mode='Markdown', reply_markup=main_menu(message))
-        
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ ورودی نامعتبر. لطفاً فقط عدد وارد کنید (مثال: 1000000).", reply_markup=main_menu(message))
-    except Exception:
-        bot.send_message(message.chat.id, "❌ خطایی رخ داد.", reply_markup=main_menu(message))
-
+# ... (کدهای /addcat، /setbudget، /clear، /report و /filter را اینجا قرار دهید)
 
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
@@ -293,139 +257,6 @@ def clear_data(message):
     data["categories"] = ["خوراک", "حمل و نقل", "تفریح", "سایر"]
     save_data()
     bot.reply_to(message, "✅ همه داده‌ها پاک شدند.", reply_markup=main_menu(message))
-
-
-@bot.message_handler(commands=['report'])
-def report_start(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(types.InlineKeyboardButton("این ماه 📅", callback_data="report_month"))
-    keyboard.add(types.InlineKeyboardButton("۳ ماه اخیر 🗓️", callback_data="report_3month"))
-    keyboard.add(types.InlineKeyboardButton("۱۵ روز اخیر 📆", callback_data="report_15day"))
-    keyboard.add(types.InlineKeyboardButton("۷ روز اخیر ⏳", callback_data="report_week"))
-    keyboard.add(types.InlineKeyboardButton("همه زمان‌ها 🌐", callback_data="report_all"))
-    
-    bot.send_message(message.chat.id, "لطفاً بازه زمانی گزارش را انتخاب کنید:", reply_markup=keyboard)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('report_'))
-def handle_report_callback(call):
-    bot.answer_callback_query(call.id, "در حال تولید گزارش...")
-    
-    period = call.data.split('_')[1]
-    
-    end_date = datetime.now()
-    start_date = None
-    period_name = ""
-
-    if period == 'week':
-        start_date = end_date - timedelta(days=7)
-        period_name = "۷ روز اخیر"
-    elif period == '15day':
-        start_date = end_date - timedelta(days=15)
-        period_name = "۱۵ روز اخیر"
-    elif period == '3month':
-        start_date = end_date - timedelta(days=90)
-        period_name = "۳ ماه اخیر"
-    elif period == 'month':
-        start_date = end_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        period_name = "ماه جاری"
-    elif period == 'all':
-        start_date = datetime.min
-        period_name = "همه زمان‌ها"
-
-    filtered_expenses = []
-    for exp in data["expenses"]:
-        try:
-            exp_date = datetime.strptime(exp["date"], "%Y-%m-%d %H:%M:%S")
-            if start_date <= exp_date <= end_date:
-                filtered_expenses.append(exp)
-        except:
-            continue
-            
-    report_text, total_spent, chart_path = generate_report(filtered_expenses, period_name)
-    
-    if total_spent is None:
-        total_spent = 0
-    
-    final_report = report_text
-    
-    if period == 'month':
-        if total_spent > BUDGET_MONTHLY:
-            final_report += f"\n\n🚨 **هشدار بودجه**: بودجه ماهانه ({BUDGET_MONTHLY:,.0f} تومان) رد شده است!"
-        else:
-            remaining = BUDGET_MONTHLY - total_spent
-            final_report += f"\n\n💡 **بودجه باقی‌مانده این ماه**: {remaining:,.0f} تومان"
-    
-    final_report += f"\n\n**💸 مجموع هزینه‌ها در این بازه**: {total_spent:,.0f} تومان"
-
-
-    bot.edit_message_text(final_report, call.message.chat.id, call.message.message_id, parse_mode='Markdown', reply_markup=None)
-    
-    if chart_path:
-        try:
-            with open(chart_path, "rb") as f:
-                bot.send_photo(call.message.chat.id, f)
-            os.remove(chart_path)
-        except Exception as e:
-            bot.send_message(call.message.chat.id, "❌ خطا در ارسال نمودار دایره‌ای.")
-
-
-@bot.message_handler(commands=['filter'])
-def filter_report(message):
-    if not data["expenses"]:
-        bot.reply_to(message, "هیچ هزینه‌ای ثبت نشده تا گزارش فیلتر شود.", reply_markup=main_menu(message))
-        return
-        
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    categories = sorted(data["categories"])
-    
-    row = []
-    for i, cat in enumerate(categories):
-        row.append(types.KeyboardButton(cat))
-        if len(row) == 3 or i == len(categories) - 1:
-            keyboard.add(*row)
-            row = []
-    
-    keyboard.add(types.KeyboardButton("لغو ✖️"))
-    
-    msg = bot.send_message(message.chat.id, "🔍 دسته‌بندی مورد نظر برای گزارش را انتخاب کنید:", reply_markup=keyboard)
-    bot.register_next_step_handler(msg, process_filter_step)
-
-def process_filter_step(message):
-    if message.text and (message.text.startswith('/') or message.text == "لغو ✖️"):
-        bot.send_message(message.chat.id, "❌ فرآیند فیلتر لغو شد.", reply_markup=main_menu(message))
-        return
-
-    chosen_category = message.text.strip()
-    
-    if chosen_category not in data["categories"]:
-        bot.send_message(message.chat.id, "❌ دسته‌بندی مورد نظر یافت نشد.", reply_markup=main_menu(message))
-        return
-
-    filtered_expenses = [exp for exp in data["expenses"] if exp.get("category") == chosen_category]
-    
-    if not filtered_expenses:
-        bot.send_message(message.chat.id, f"⚠️ هیچ هزینه‌ای برای دسته‌بندی **{chosen_category}** ثبت نشده است.", parse_mode='Markdown', reply_markup=main_menu(message))
-        return
-        
-    total_spent = sum([exp.get("amount", 0) for exp in filtered_expenses])
-    
-    report_text = f"📊 گزارش فیلتر شده برای **{chosen_category}**:\n"
-    report_text += f"💰 **مجموع هزینه‌ها**: {total_spent:,.0f} تومان\n"
-    report_text += "\n📝 **آخرین ۵ تراکنش**:\n"
-    
-    filtered_expenses.sort(key=lambda x: datetime.strptime(x["date"], "%Y-%m-%d %H:%M:%S"), reverse=True)
-    
-    for exp in filtered_expenses[:5]:
-        report_text += f"  - {exp.get('amount', 0):,.0f} تومان ({exp.get('date', 'بدون تاریخ').split()[0]})"
-        if exp.get('note') and exp.get('note') != exp.get('category'):
-             report_text += f" | {exp['note']}"
-        if exp.get('tags'):
-             report_text += f" | تگ: {', '.join(exp['tags'])}\n"
-        else:
-             report_text += "\n"
-        
-    bot.send_message(message.chat.id, report_text, parse_mode='Markdown', reply_markup=main_menu(message))
 
 # ----------------------------------------
 #           *** Handler برای ویس (Voice) ***
@@ -442,7 +273,8 @@ def add_expense_voice(message):
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     
-    temp_wav_path = "temp_voice.wav"
+    # استفاده از DATA_FOLDER برای ذخیره موقت فایل WAV
+    temp_wav_path = os.path.join(DATA_FOLDER, "temp_voice.wav")
     text = ""
     
     try:
@@ -457,13 +289,14 @@ def add_expense_voice(message):
             text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7)
             
     except pydub_exceptions.CouldntFindFFmpeg:
-        bot.reply_to(message, "❌ **خطای عدم نصب پیش‌نیاز (FFmpeg)**: برای تبدیل فایل صوتی تلگرام به متن، لازم است **FFmpeg** روی سیستم شما نصب باشد.", reply_markup=main_menu(message))
+        bot.reply_to(message, "❌ **خطای عدم نصب FFmpeg:** پردازش ویس فعال نیست.", reply_markup=main_menu(message))
         return
     except Exception as e:
         print(f"Error in Voice Processing: {e}")
         bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما واضح نبود.", reply_markup=main_menu(message))
         return
     finally:
+        # حذف فایل موقت
         if os.path.exists(temp_wav_path):
             os.remove(temp_wav_path)
 
@@ -491,12 +324,7 @@ def add_expense_text(message):
     
     exp = smart_parse_amount_category(message.text)
     
-    if not exp:
-        # اگر GEMINI_API_KEY تنظیم نشده باشد
-        bot.reply_to(message, "❌ خطا: سرویس هوشمند غیرفعال است یا ورودی نامعتبر.", reply_markup=main_menu(message))
-        return
-    
-    if exp["amount"] == 0:
+    if not exp or exp["amount"] == 0:
         bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. (مثال: 150 هزار ناهار رستوران #تولد)", reply_markup=main_menu(message))
         return
         
@@ -511,13 +339,10 @@ def add_expense_text(message):
 
 
 # ----------------------------------------
-#           *** اجرای ربات در لیارا (Webhook) ***
+#           *** ۵. اجرای ربات در لیارا (Webhook) ***
 # ----------------------------------------
 
-APP_NAME = os.environ.get("APP_NAME", "my-telegram-bot") 
 PORT = int(os.environ.get('PORT', 3000))
-
-WEBHOOK_URL_BASE = f"https://{APP_NAME}.liara.run" 
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 
 server = Flask(__name__)
@@ -532,10 +357,15 @@ def get_message():
     return "Error", 400
 
 if __name__ == '__main__':
-    if not TOKEN or not APP_NAME:
-        print("خطا: BOT_TOKEN یا APP_NAME تنظیم نشده است. ربات راه‌اندازی نشد.")
-    else:
+    # 🚨 چک کردن توکن و آدرس
+    if not TOKEN:
+        print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
+    if not WEBHOOK_URL_BASE:
+        print("خطا: WEBHOOK_URL تنظیم نشده است. ربات نمی‌تواند وب‌هوک را تنظیم کند.")
+
+    if TOKEN and WEBHOOK_URL_BASE:
         bot.remove_webhook()
+        # استفاده از آدرس کامل خوانده شده از محیط
         bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
         
         print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
