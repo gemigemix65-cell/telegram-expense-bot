@@ -1,50 +1,45 @@
-# ----------------------------------------
-# ۱. تعیین ایمیج پایه
-# ----------------------------------------
-# استفاده از نسخه python:3.10-slim-buster
-FROM python:3.10-slim-buster
+# =========================================================
+# BUILD STAGE (مرحله ساخت): نصب وابستگی‌های سنگین و سیستمی
+# =========================================================
+# از ایمیج کامل‌تر برای اطمینان از نصب موفقیت‌آمیز apt-get استفاده می‌کنیم.
+FROM python:3.10 as builder
 
-# ----------------------------------------
-# ۲. تنظیم دایرکتوری کاری درون کانتینر
-# ----------------------------------------
+# تنظیم دایرکتوری کاری
 WORKDIR /app
 
-# ----------------------------------------
-# ۳. نصب FFmpeg و سایر وابستگی‌های سیستمی (رفع خطای ۴۰۴)
-# ----------------------------------------
-# ما دیگر sources.list را بازنویسی نمی‌کنیم و فقط از apt-get استفاده می‌کنیم.
-# این کار از خطای 404 در مخازن سفارشی جلوگیری می‌کند.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        # نصب پکیج حیاتی FFmpeg برای پردازش ویس
-        ffmpeg \
-        # نصب پکیج‌های توسعه برای زمانی که برخی وابستگی‌های پایتون نیاز به کامپایل دارند
-        build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# نصب FFmpeg و Build-Essential در این مرحله
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    build-essential
 
-# ----------------------------------------
-# ۴. کپی کردن فایل‌ها و نصب وابستگی‌های پایتون
-# ----------------------------------------
+# کپی کردن و نصب وابستگی‌های پایتون (که ممکن است نیاز به کامپایل داشته باشند)
 COPY requirements.txt .
-
-# نصب وابستگی‌های پایتون
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ----------------------------------------
-# ۵. حذف بسته‌های توسعه برای کوچک‌سازی ایمیج نهایی
-# ----------------------------------------
-# حذف build-essential و بسته‌های اضافه پس از نصب پکیج‌های پایتون
-RUN apt-get update \
-    && apt-get purge -y --auto-remove build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# =========================================================
+# FINAL STAGE (مرحله نهایی): ساخت ایمیج سبک و تمیز
+# =========================================================
+# تغییر به ایمیج slim-buster برای حجم نهایی کوچک‌تر
+FROM python:3.10-slim-buster
 
-# ----------------------------------------
-# ۶. کپی کردن فایل‌های کد اصلی
-# ----------------------------------------
+# تنظیم دایرکتوری کاری
+WORKDIR /app
+
+# 1. کپی کردن FFmpeg و کتابخانه‌های سیستمی ضروری از مرحله builder
+# FFMPEG binaries and libraries
+COPY --from=builder /usr/bin/ffmpeg /usr/bin/ffmpeg
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libav* /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libsw* /usr/lib/x86_64-linux-gnu/
+# اضافه کردن کتابخانه‌های پایه دبیان
+COPY --from=builder /lib/x86_64-linux-gnu/libm.so.6 /lib/x86_64-linux-gnu/
+COPY --from=builder /lib/x86_64-linux-gnu/libdl.so.2 /lib/x86_64-linux-gnu/
+
+# 2. کپی کردن پکیج‌های پایتون نصب شده (بهترین روش)
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# 3. کپی کردن فایل‌های کد اصلی
 COPY main.py .
 
-# ----------------------------------------
-# ۷. اجرای ربات
-# ----------------------------------------
+# 4. دستور اجرای ربات
 CMD ["python", "main.py"]
