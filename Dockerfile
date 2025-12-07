@@ -1,8 +1,8 @@
 # =========================================================
 # BUILD STAGE (مرحله ساخت): نصب وابستگی‌های سنگین و سیستمی
+# از ایمیج slim برای هر دو مرحله استفاده می کنیم
 # =========================================================
-# استفاده از ایمیج کامل‌تر برای اطمینان از نصب موفقیت‌آمیز apt-get
-FROM python:3.10 as builder
+FROM python:3.10-slim as builder 
 
 # تنظیم دایرکتوری کاری
 WORKDIR /app
@@ -19,23 +19,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # =========================================================
 # FINAL STAGE (مرحله نهایی): ساخت ایمیج سبک و تمیز
+# ایمیج نهایی را نیز "slim" نگه می داریم تا GLIBC یکسان باشد
 # =========================================================
-# تغییر به ایمیج slim-buster برای حجم نهایی کوچک‌تر
-FROM python:3.10-slim-buster
+FROM python:3.10-slim
 
 # تنظیم دایرکتوری کاری
 WORKDIR /app
 
-# 1. نصب مجدد FFmpeg (اختیاری اما امن‌تر)
-# اگرچه هدف ما کپی کردن بود، اما برای حل GLIBC، نصب دوباره FFmpeg در ایمیج نهایی بهتر است
-# البته این خط نیاز به حل مشکل apt-get update دارد، اما ما به جای آن از نصب دستی استفاده می کنیم
-# --- راه حل پایدار: فقط کپی کردن باینری FFmpeg و اتکا به GLIBC موجود ---
-
 # 1. کپی کردن فایل باینری FFmpeg از مرحله builder
-# ما فقط خود فایل اجرایی ffmpeg را کپی می کنیم.
+# FFmpeg باینری
 COPY --from=builder /usr/bin/ffmpeg /usr/bin/ffmpeg
+# کپی کردن کتابخانه‌های وابسته به FFmpeg (مانند libavcodec)
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libavcodec* /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libavformat* /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libavutil* /usr/lib/x86_64-linux-gnu/
 
-# 2. کپی کردن پکیج‌های پایتون نصب شده (ضروری)
+
+# 2. کپی کردن پکیج‌های پایتون نصب شده
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
