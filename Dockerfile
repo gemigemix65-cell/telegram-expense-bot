@@ -1,6 +1,7 @@
 # ----------------------------------------
-# ۱. تعیین تصویر پایه
+# ۱. تعیین ایمیج پایه
 # ----------------------------------------
+# استفاده از نسخه python:3.10-slim-buster
 FROM python:3.10-slim-buster
 
 # ----------------------------------------
@@ -9,28 +10,31 @@ FROM python:3.10-slim-buster
 WORKDIR /app
 
 # ----------------------------------------
-# ۳. اصلاح فایل منابع APT و نصب (راه حل پایداری شبکه)
+# ۳. نصب FFmpeg و سایر وابستگی‌های سیستمی (رفع خطای ۴۰۴)
 # ----------------------------------------
-RUN echo "deb http://deb.debian.org/debian buster main" > /etc/apt/sources.list \
-    && echo "deb http://deb.debian.org/debian buster-updates main" >> /etc/apt/sources.list \
-    && echo "deb http://security.debian.org/debian-security buster/updates main" >> /etc/apt/sources.list \
-    && apt-get update \
+# ما دیگر sources.list را بازنویسی نمی‌کنیم و فقط از apt-get استفاده می‌کنیم.
+# این کار از خطای 404 در مخازن سفارشی جلوگیری می‌کند.
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        # نصب پکیج حیاتی FFmpeg برای پردازش ویس
         ffmpeg \
+        # نصب پکیج‌های توسعه برای زمانی که برخی وابستگی‌های پایتون نیاز به کامپایل دارند
         build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------------------
-# ۴. کپی کردن فایل‌ها و نصب وابستگی‌ها
+# ۴. کپی کردن فایل‌ها و نصب وابستگی‌های پایتون
 # ----------------------------------------
 COPY requirements.txt .
 
+# نصب وابستگی‌های پایتون
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ----------------------------------------
 # ۵. حذف بسته‌های توسعه برای کوچک‌سازی ایمیج نهایی
 # ----------------------------------------
+# حذف build-essential و بسته‌های اضافه پس از نصب پکیج‌های پایتون
 RUN apt-get update \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
