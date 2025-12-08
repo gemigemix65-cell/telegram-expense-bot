@@ -1,5 +1,5 @@
 import telebot
-from telebot import types as telegram_types # ⬅️ اصلاح ۱: تغییر نام types تلگرام
+from telebot import types as telegram_types
 from flask import Flask, request
 import json
 import os
@@ -13,7 +13,7 @@ import csv
 
 # 🚀 اضافه شدن SDK Gemini
 import google.genai as genai 
-from google.genai import types # ⬅️ این types مخصوص Gemini است
+from google.genai import types 
 
 # ----------------------------------------
 #           *** ۱. تنظیمات عمومی و AI ***
@@ -25,7 +25,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
 # 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
-# مسیر پیشنهادی: /app/data
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
 
@@ -73,15 +72,21 @@ if GEMINI_API_KEY:
 else:
     print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
 
+# 📜 اصلاح نهایی: تاکید بر تبدیل عبارت‌های فارسی پیچیده (مانند میلیون) به عدد کامل
 SMART_AGENT_SYSTEM_PROMPT = """
 شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
+شما باید همیشه **مبلغ فارسی نوشتاری** (مانند 'هزار', 'میلیون', 'صد هزار') را به **عدد صحیح و کامل** (فقط عدد، بدون کاما یا واحد پول) تبدیل کنید.
 خروجی شما باید یک JSON Payload باشد که شامل:
-- 'amount': مبلغ هزینه (به تومان، فقط عدد، بدون کاما یا واحد پول).
-- 'category': دسته‌بندی اصلی هزینه (مثال: 'خوراک', 'حمل و نقل', 'تفریح'). اگر مشخص نبود، 'سایر' بگذارید.
-- 'note': توضیحات یا یادداشت کامل تراکنش.
+- 'amount': مبلغ هزینه (به تومان، فقط عدد کامل). اگر مبلغی پیدا نشد، حتماً مقدار آن را صفر (0) بگذارید.
+- 'category': دسته‌بندی اصلی هزینه (مثال: 'خوراک', 'حمل و نقل', 'تفریح', 'پوشاک'). اگر مشخص نبود، 'سایر' بگذارید.
+- 'note': توضیحات یا یادداشت کامل تراکنش. اگر مشخص نبود، از مقدار category استفاده کنید.
 - 'tags': لیست تگ‌های موجود در متن (کلماتی که با # شروع می‌شوند، بدون #).
 
-اگر مبلغ یافت نشد، 'amount' را صفر بگذارید.
+مثال‌های خروجی مورد انتظار:
+- برای ورودی 'یک میلیون و ۵۵۰ هزار تومان لباس':
+  {"amount": 1550000, "category": "پوشاک", "note": "لباس", "tags": []}
+- برای ورودی '150 هزار رستوران':
+  {"amount": 150000, "category": "خوراک", "note": "رستوران", "tags": []}
 """
 
 def smart_parse_amount_category(text):
@@ -94,7 +99,7 @@ def smart_parse_amount_category(text):
         response = genai.client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=[text],
-            config=types.GenerateContentConfig( # ⬅️ استفاده از types مربوط به Gemini
+            config=types.GenerateContentConfig( 
                 system_instruction=SMART_AGENT_SYSTEM_PROMPT,
                 response_mime_type="application/json"
             )
@@ -104,7 +109,12 @@ def smart_parse_amount_category(text):
         result = json.loads(response.text)
         
         # نرمال‌سازی خروجی
-        amount = int(result.get("amount", 0))
+        # استفاده از int() برای اطمینان از عدد صحیح بودن مبلغ
+        try:
+            amount = int(result.get("amount", 0))
+        except ValueError:
+            amount = 0 # اگر مدل رشته غیرعددی برگرداند، صفر در نظر گرفته شود
+            
         category = result.get("category", "سایر")
         note = result.get("note", category)
         tags = result.get("tags", [])
@@ -186,7 +196,6 @@ def generate_report(expenses_list, period_name):
 
 
 def main_menu(message):
-    # ⬅️ استفاده از telegram_types برای کیبورد
     keyboard = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
@@ -248,7 +257,6 @@ def undo_last_expense(message):
     except ValueError:
            bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
 
-# (توجه: کد سایر Commandها نظیر /report، /filter، /addcat، /setbudget و /export در اینجا قرار نگرفته است)
 
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
@@ -325,7 +333,7 @@ def add_expense_text(message):
     exp = smart_parse_amount_category(message.text)
     
     if not exp or exp["amount"] == 0:
-        bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. (مثال: 150 هزار ناهار رستوران #تولد)", reply_markup=main_menu(message))
+        bot.reply_to(message, "❌ فرمت اشتباه یا مبلغ صفر است. (مثال: یک میلیون و ۵۵۰ هزار تومان لباس #خرید)", reply_markup=main_menu(message))
         return
         
     if exp["category"] not in data["categories"]:
@@ -351,7 +359,6 @@ server = Flask(__name__)
 def get_message():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
-        # ⬅️ اصلاح ۲: استفاده از telegram_types برای دریافت به‌روزرسانی
         update = telegram_types.Update.de_json(json_string) 
         
         bot.process_new_updates([update])
@@ -359,7 +366,6 @@ def get_message():
     return "Error", 400
 
 if __name__ == '__main__':
-    # 🚨 چک کردن توکن و آدرس
     if not TOKEN:
         print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
     if not WEBHOOK_URL_BASE:
@@ -367,7 +373,6 @@ if __name__ == '__main__':
 
     if TOKEN and WEBHOOK_URL_BASE:
         bot.remove_webhook()
-        # استفاده از آدرس کامل خوانده شده از محیط
         bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
         
         print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
