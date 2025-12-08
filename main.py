@@ -43,11 +43,9 @@ if not os.path.exists(DATA_FOLDER):
 # 🚨 بررسی توکن و آدرس قبل از راه‌اندازی ربات
 if not TOKEN:
     print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
-    # برای جلوگیری از کرش، اگر توکن نیست، برنامه را متوقف کنید
     exit()
 if not WEBHOOK_URL_BASE:
     print("خطا: WEBHOOK_URL تنظیم نشده است. ربات نمی‌تواند وب‌هوک را تنظیم کند.")
-    # برای جلوگیری از کرش، اگر آدرس نیست، برنامه را متوقف کنید
     exit()
 
 bot = telebot.TeleBot(TOKEN)
@@ -79,15 +77,20 @@ if os.path.exists(DATA_FILE):
 #           *** ۲. Agent هوشمند Gemini ***
 # ----------------------------------------
 
+gemini_client = None # ⬅️ تعریف شیء کلاینت به صورت سراسری
+
 if GEMINI_API_KEY:
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
+        # 🌟 اصلاح احراز هویت: ایجاد شیء کلاینت به جای configure
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("✅ Gemini Client initialized successfully.")
     except Exception as e:
-        print(f"Error configuring Gemini: {e}")
+        # اگر خطا در اینجا رخ دهد، فقط Client نخواهد داشت و ادامه می‌دهد
+        print(f"Error initializing Gemini Client: {e}")
 else:
     print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
 
-# 📜 اصلاح نهایی: تاکید بر تبدیل عبارت‌های فارسی پیچیده (مانند میلیون) به عدد کامل
+# 📜 سیستم پرامپت Agent هوشمند
 SMART_AGENT_SYSTEM_PROMPT = """
 شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
 شما باید همیشه **مبلغ فارسی نوشتاری** (مانند 'هزار', 'میلیون', 'صد هزار') را به **عدد صحیح و کامل** (فقط عدد، بدون کاما یا واحد پول) تبدیل کنید.
@@ -106,11 +109,12 @@ SMART_AGENT_SYSTEM_PROMPT = """
 
 def smart_parse_amount_category(text):
     """استخراج مبلغ، دسته و یادداشت با استفاده از Gemini Agent."""
-    if not GEMINI_API_KEY:
+    if not gemini_client: # ⬅️ استفاده از شیء سراسری
         return None 
 
     try:
-        response = genai.client.models.generate_content(
+        # ⬅️ استفاده از شیء سراسری
+        response = gemini_client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=[text],
             config=types.GenerateContentConfig( 
@@ -206,6 +210,7 @@ def generate_report(expenses_list, period_name):
 
 
 def main_menu(message):
+    # ⬅️ استفاده مستقیم از telebot.types برای کیبورد
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
@@ -218,6 +223,7 @@ def main_menu(message):
         "/clear 🔄 پاکسازی"
     ]
     
+    # ⬅️ استفاده از telegram_types برای ساخت دکمه‌ها
     keyboard.row(telegram_types.KeyboardButton(buttons[0]), telegram_types.KeyboardButton(buttons[1]))
     keyboard.row(telegram_types.KeyboardButton(buttons[2]), telegram_types.KeyboardButton(buttons[3]))
     keyboard.row(telegram_types.KeyboardButton(buttons[4]), telegram_types.KeyboardButton(buttons[5]))
@@ -228,14 +234,6 @@ def main_menu(message):
 # ----------------------------------------
 #            *** ۴. Handlers اصلی ***
 # ----------------------------------------
-
-# 💡 Handler عیب‌یابی: برای تست اینکه آیا پیام‌ها اصلاً به Handlers می‌رسند؟
-@bot.message_handler(func=lambda m: True, content_types=['text', 'voice', 'photo', 'document', 'sticker'])
-def echo_all(message):
-    """این تابع برای عیب‌یابی موقت اضافه شده است. هر پیامی را که دریافت کند، به کاربر برمی‌گرداند."""
-    print(f"Received test update from chat {message.chat.id}")
-    bot.send_message(message.chat.id, f"✅ پیام دریافتی (تست): {message.text if message.text else 'پیام غیرمتنی'}")
-
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -287,7 +285,7 @@ def clear_data(message):
 
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
-    if not GEMINI_API_KEY:
+    if not gemini_client:
         bot.send_message(message.chat.id, "⚠️ **خطا:** کلید GEMINI API تنظیم نشده. نمی‌توانم ویس را پردازش کنم.", reply_markup=main_menu(message))
         return
         
@@ -337,8 +335,6 @@ def add_expense_voice(message):
 #           *** Handler برای متن (Text) ***
 # ----------------------------------------
 
-# 🚨 این Handler پس از Handler عیب‌یابی بالا، دیگر اجرا نخواهد شد، مگر اینکه Handler عیب‌یابی حذف شود.
-# فعلاً برای عیب‌یابی، Handler عیب‌یابی (echo_all) فعال است.
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
     
