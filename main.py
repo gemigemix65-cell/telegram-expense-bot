@@ -24,6 +24,11 @@ TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
+# تنظیمات Webhook و Flask
+PORT = int(os.environ.get('PORT', 3000))
+WEBHOOK_URL_PATH = f"/{TOKEN}" 
+server = Flask(__name__)
+
 # 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
@@ -34,6 +39,16 @@ if not os.path.exists(DATA_FOLDER):
         os.makedirs(DATA_FOLDER, exist_ok=True)
     except Exception as e:
         print(f"Error creating data folder: {e}")
+
+# 🚨 بررسی توکن و آدرس قبل از راه‌اندازی ربات
+if not TOKEN:
+    print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
+    # برای جلوگیری از کرش، اگر توکن نیست، برنامه را متوقف کنید
+    exit()
+if not WEBHOOK_URL_BASE:
+    print("خطا: WEBHOOK_URL تنظیم نشده است. ربات نمی‌تواند وب‌هوک را تنظیم کند.")
+    # برای جلوگیری از کرش، اگر آدرس نیست، برنامه را متوقف کنید
+    exit()
 
 bot = telebot.TeleBot(TOKEN)
 BUDGET_MONTHLY = 500000 
@@ -95,7 +110,6 @@ def smart_parse_amount_category(text):
         return None 
 
     try:
-        # فراخوانی Agent (Gemini 2.5 Flash رایگان)
         response = genai.client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=[text],
@@ -105,15 +119,12 @@ def smart_parse_amount_category(text):
             )
         )
         
-        # تحلیل پاسخ JSON
         result = json.loads(response.text)
         
-        # نرمال‌سازی خروجی
-        # استفاده از int() برای اطمینان از عدد صحیح بودن مبلغ
         try:
             amount = int(result.get("amount", 0))
         except ValueError:
-            amount = 0 # اگر مدل رشته غیرعددی برگرداند، صفر در نظر گرفته شود
+            amount = 0 
             
         category = result.get("category", "سایر")
         note = result.get("note", category)
@@ -141,7 +152,6 @@ def smart_parse_amount_category(text):
 
 def save_data():
     """ذخیره داده‌ها در فایل JSON روی دیسک پایدار"""
-    # تاریخ‌گذاری آیتم‌های بدون تاریخ
     for item in data["expenses"]:
         if "date" not in item:
             item["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -186,7 +196,7 @@ def generate_report(expenses_list, period_name):
                 plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
                 plt.title(f"درصد هزینه‌ها در {period_name}", loc='right')
                 plt.tight_layout()
-                chart_path = os.path.join(DATA_FOLDER, "report_pie.png") # ذخیره نمودار در دیسک
+                chart_path = os.path.join(DATA_FOLDER, "report_pie.png") 
                 plt.savefig(chart_path)
                 plt.close()
         except Exception as e:
@@ -196,7 +206,7 @@ def generate_report(expenses_list, period_name):
 
 
 def main_menu(message):
-    keyboard = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
         "/report 📊 گزارش کلی",
@@ -219,6 +229,14 @@ def main_menu(message):
 #            *** ۴. Handlers اصلی ***
 # ----------------------------------------
 
+# 💡 Handler عیب‌یابی: برای تست اینکه آیا پیام‌ها اصلاً به Handlers می‌رسند؟
+@bot.message_handler(func=lambda m: True, content_types=['text', 'voice', 'photo', 'document', 'sticker'])
+def echo_all(message):
+    """این تابع برای عیب‌یابی موقت اضافه شده است. هر پیامی را که دریافت کند، به کاربر برمی‌گرداند."""
+    print(f"Received test update from chat {message.chat.id}")
+    bot.send_message(message.chat.id, f"✅ پیام دریافتی (تست): {message.text if message.text else 'پیام غیرمتنی'}")
+
+
 @bot.message_handler(commands=['start'])
 def start(message):
     keyboard = main_menu(message)
@@ -232,24 +250,21 @@ def undo_last_expense(message):
         bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
-    # پیدا کردن آخرین آیتم بر اساس تاریخ
     all_items = []
     for item in data["expenses"]:
         try:
-            # اگر تاریخ موجود نبود، تاریخ فعلی را در نظر بگیرید
             date_str = item.get("date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             all_items.append((datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S"), item))
         except:
-            all_items.append((datetime.min, item)) # آیتم‌های بدون تاریخ در اول قرار می‌گیرند
+            all_items.append((datetime.min, item)) 
             
     if not all_items:
         bot.send_message(message.chat.id, "لیست هزینه‌های شما خالی است.", reply_markup=main_menu(message))
         return
 
-    all_items.sort(key=lambda x: x[0], reverse=True) # مرتب‌سازی نزولی بر اساس تاریخ
+    all_items.sort(key=lambda x: x[0], reverse=True) 
     last_item = all_items[0][1] 
     
-    # حذف آیتم از لیست اصلی
     try:
         data["expenses"].remove(last_item)
         save_data()
@@ -281,16 +296,13 @@ def add_expense_voice(message):
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     
-    # استفاده از DATA_FOLDER برای ذخیره موقت فایل WAV
     temp_wav_path = os.path.join(DATA_FOLDER, "temp_voice.wav")
     text = ""
     
     try:
-        # 1. تبدیل ogg/oga به wav 
         audio = AudioSegment.from_file(io.BytesIO(downloaded_file), format="ogg")
         audio.export(temp_wav_path, format="wav")
         
-        # 2. تشخیص گفتار
         r = sr.Recognizer()
         with sr.AudioFile(temp_wav_path) as source:
             audio_data = r.record(source, duration=10) 
@@ -304,11 +316,9 @@ def add_expense_voice(message):
         bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما واضح نبود.", reply_markup=main_menu(message))
         return
     finally:
-        # حذف فایل موقت
         if os.path.exists(temp_wav_path):
             os.remove(temp_wav_path)
 
-    # 3. پردازش متن استخراج شده با Agent جدید
     exp = smart_parse_amount_category(text)
     
     if exp and exp["amount"] > 0:
@@ -327,6 +337,8 @@ def add_expense_voice(message):
 #           *** Handler برای متن (Text) ***
 # ----------------------------------------
 
+# 🚨 این Handler پس از Handler عیب‌یابی بالا، دیگر اجرا نخواهد شد، مگر اینکه Handler عیب‌یابی حذف شود.
+# فعلاً برای عیب‌یابی، Handler عیب‌یابی (echo_all) فعال است.
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
     
@@ -350,11 +362,6 @@ def add_expense_text(message):
 #           *** ۵. اجرای ربات در لیارا (Webhook) ***
 # ----------------------------------------
 
-PORT = int(os.environ.get('PORT', 3000))
-WEBHOOK_URL_PATH = f"/{TOKEN}" 
-
-server = Flask(__name__)
-
 @server.route(WEBHOOK_URL_PATH, methods=['POST'])
 def get_message():
     if request.headers.get('content-type') == 'application/json':
@@ -366,15 +373,11 @@ def get_message():
     return "Error", 400
 
 if __name__ == '__main__':
-    if not TOKEN:
-        print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
-    if not WEBHOOK_URL_BASE:
-        print("خطا: WEBHOOK_URL تنظیم نشده است. ربات نمی‌تواند وب‌هوک را تنظیم کند.")
-
-    if TOKEN and WEBHOOK_URL_BASE:
-        bot.remove_webhook()
-        bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
-        
-        print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
-        
-        server.run(host="0.0.0.0", port=PORT)
+    
+    # تنظیم مجدد وب‌هوک
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
+    
+    print(f"ربات در حالت Webhook شروع به کار کرد روی پورت {PORT}...")
+    
+    server.run(host="0.0.0.0", port=PORT)
