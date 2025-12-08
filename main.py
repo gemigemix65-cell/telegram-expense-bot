@@ -1,5 +1,5 @@
 import telebot
-from telebot import types
+from telebot import types as telegram_types # ⬅️ اصلاح ۱: تغییر نام types تلگرام
 from flask import Flask, request
 import json
 import os
@@ -13,7 +13,7 @@ import csv
 
 # 🚀 اضافه شدن SDK Gemini
 import google.genai as genai 
-from google.genai import types
+from google.genai import types # ⬅️ این types مخصوص Gemini است
 
 # ----------------------------------------
 #           *** ۱. تنظیمات عمومی و AI ***
@@ -25,7 +25,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
 # 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
-# این مسیر باید با مسیری که دیسک را در پنل لیارا به آن متصل کرده‌اید، یکسان باشد
+# مسیر پیشنهادی: /app/data
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
 
@@ -34,7 +34,6 @@ if not os.path.exists(DATA_FOLDER):
     try:
         os.makedirs(DATA_FOLDER, exist_ok=True)
     except Exception as e:
-        # در صورت خطا در ساخت پوشه (مثلا در محیط غیر داکر)
         print(f"Error creating data folder: {e}")
 
 bot = telebot.TeleBot(TOKEN)
@@ -95,7 +94,7 @@ def smart_parse_amount_category(text):
         response = genai.client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=[text],
-            config=types.GenerateContentConfig(
+            config=types.GenerateContentConfig( # ⬅️ استفاده از types مربوط به Gemini
                 system_instruction=SMART_AGENT_SYSTEM_PROMPT,
                 response_mime_type="application/json"
             )
@@ -187,7 +186,8 @@ def generate_report(expenses_list, period_name):
 
 
 def main_menu(message):
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    # ⬅️ استفاده از telegram_types برای کیبورد
+    keyboard = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
         "/report 📊 گزارش کلی",
@@ -199,10 +199,10 @@ def main_menu(message):
         "/clear 🔄 پاکسازی"
     ]
     
-    keyboard.row(types.KeyboardButton(buttons[0]), types.KeyboardButton(buttons[1]))
-    keyboard.row(types.KeyboardButton(buttons[2]), types.KeyboardButton(buttons[3]))
-    keyboard.row(types.KeyboardButton(buttons[4]), types.KeyboardButton(buttons[5]))
-    keyboard.row(types.KeyboardButton(buttons[6]))
+    keyboard.row(telegram_types.KeyboardButton(buttons[0]), telegram_types.KeyboardButton(buttons[1]))
+    keyboard.row(telegram_types.KeyboardButton(buttons[2]), telegram_types.KeyboardButton(buttons[3]))
+    keyboard.row(telegram_types.KeyboardButton(buttons[4]), telegram_types.KeyboardButton(buttons[5]))
+    keyboard.row(telegram_types.KeyboardButton(buttons[6]))
 
     return keyboard
 
@@ -248,7 +248,7 @@ def undo_last_expense(message):
     except ValueError:
            bot.send_message(message.chat.id, "❌ خطا در حذف آیتم هزینه. آیتم یافت نشد.", parse_mode='Markdown', reply_markup=main_menu(message))
 
-# ... (کدهای /addcat، /setbudget، /clear، /report و /filter را اینجا قرار دهید)
+# (توجه: کد سایر Commandها نظیر /report، /filter، /addcat، /setbudget و /export در اینجا قرار نگرفته است)
 
 @bot.message_handler(commands=['clear'])
 def clear_data(message):
@@ -268,7 +268,7 @@ def add_expense_voice(message):
         bot.send_message(message.chat.id, "⚠️ **خطا:** کلید GEMINI API تنظیم نشده. نمی‌توانم ویس را پردازش کنم.", reply_markup=main_menu(message))
         return
         
-    bot.send_message(message.chat.id, "در حال پردازش ویس و تحلیل هوشمند...", reply_markup=types.ReplyKeyboardRemove())
+    bot.send_message(message.chat.id, "در حال پردازش ویس و تحلیل هوشمند...", reply_markup=telegram_types.ReplyKeyboardRemove())
     
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
@@ -351,7 +351,9 @@ server = Flask(__name__)
 def get_message():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
-        update = types.Update.de_json(json_string) 
+        # ⬅️ اصلاح ۲: استفاده از telegram_types برای دریافت به‌روزرسانی
+        update = telegram_types.Update.de_json(json_string) 
+        
         bot.process_new_updates([update])
         return "OK", 200
     return "Error", 400
