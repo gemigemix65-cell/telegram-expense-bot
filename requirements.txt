@@ -18,3 +18,4 @@ pydub
 
 # 5. گزارش‌دهی و نمودارها (نمودار دایره‌ای)
 matplotlib
+pydantic
