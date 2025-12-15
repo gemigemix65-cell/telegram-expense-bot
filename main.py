@@ -15,29 +15,34 @@ from typing import List
 # 🚀 اضافه شدن SDK Gemini و Pydantic
 import google.genai as genai 
 from google.genai import types 
-from pydantic import BaseModel, Field # ⬅️ اضافه شد
+from pydantic import BaseModel, Field 
 
 # ----------------------------------------
 #           *** ۱. تنظیمات عمومی و AI ***
 # ----------------------------------------
 
+# 🚨 امنیت: توکن‌ها را از متغیر محیطی می‌خواند.
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
+# تنظیمات Webhook و Flask
 PORT = int(os.environ.get('PORT', 3000))
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 server = Flask(__name__)
 
+# 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
 
+# تضمین وجود پوشه دیسک
 if not os.path.exists(DATA_FOLDER):
     try:
         os.makedirs(DATA_FOLDER, exist_ok=True)
     except Exception as e:
         print(f"Error creating data folder: {e}")
 
+# 🚨 بررسی توکن و آدرس قبل از راه‌اندازی ربات
 if not TOKEN:
     print("خطا: BOT_TOKEN تنظیم نشده است.")
     exit()
@@ -48,10 +53,12 @@ if not WEBHOOK_URL_BASE:
 bot = telebot.TeleBot(TOKEN)
 BUDGET_MONTHLY = 500000 
 
+# --- تنظیمات Plotting فارسی ---
 rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False 
 
+# --- بارگذاری ایمن داده‌ها ---
 DEFAULT_DATA = {
     "expenses": [], 
     "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
@@ -76,6 +83,7 @@ gemini_client = None
 
 if GEMINI_API_KEY:
     try:
+        # 🌟 اصلاح احراز هویت: ایجاد شیء کلاینت به جای configure
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
         print("✅ Gemini Client initialized successfully.")
     except Exception as e:
@@ -125,19 +133,31 @@ def smart_parse_amount_category(text):
             )
         )
         
-        # ⬅️ استفاده مستقیم از Pydantic برای اعتبارسنجی
-        parsed_data = ExpenseSchema.model_validate_json(response.text)
+        # 🌟🌟🌟 کد مقاوم‌سازی برای پاکسازی خروجی JSON 🌟🌟🌟
+        raw_json_text = response.text.strip()
+        # در صورت وجود، حذف Markdown
+        if raw_json_text.startswith("```json"):
+            raw_json_text = raw_json_text[7:]
+        if raw_json_text.endswith("```"):
+            raw_json_text = raw_json_text[:-3]
+        raw_json_text = raw_json_text.strip()
+        # 🌟🌟🌟 پایان کد مقاوم‌سازی 🌟🌟🌟
+
+        # ⬅️ استفاده از متن پاکسازی شده
+        parsed_data = ExpenseSchema.model_validate_json(raw_json_text)
         
         # تبدیل به دیکشنری ساده
         exp_dict = parsed_data.model_dump()
         exp_dict["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
-        exp_dict["note"] = exp_dict["note"] or exp_dict["category"] # اگر نوت خالی بود، دسته را قرار بده
+        exp_dict["note"] = exp_dict["note"] or exp_dict["category"] 
         
         return exp_dict
 
     except Exception as e:
         print(f"Gemini/Pydantic Error in smart_parse: {e}")
-        print(f"Gemini Response Text: {response.text if 'response' in locals() else 'N/A'}")
+        # ⬅️ لاگ کردن متن خام ورودی و متن پاسخ Gemini برای عیب‌یابی بیشتر
+        print(f"Input Text: {text}")
+        print(f"Gemini Response Text (Raw): {response.text if 'response' in locals() else 'N/A'}")
         return None
 
 
@@ -163,7 +183,7 @@ def save_data():
          print(f"Error saving data to {DATA_FILE}: {e}")
 
 def generate_report(expenses_list, period_name):
-    # ... (تابع گزارش بدون تغییر) ...
+    """تابع تولید گزارش و نمودار."""
     if not expenses_list:
         return f"⚠️ هیچ هزینه‌ای در بازه **{period_name}** ثبت نشده است.", None, None
 
@@ -223,8 +243,6 @@ def main_menu(message):
 # ----------------------------------------
 #            *** ۴. Handlers اصلی ***
 # ----------------------------------------
-
-# 🚨 حذف Handler عیب‌یابی (echo_all) برای فعال شدن دکمه‌ها
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -294,19 +312,18 @@ def add_expense_voice(message):
         
         r = sr.Recognizer()
         with sr.AudioFile(temp_wav_path) as source:
-            # ⬅️ افزایش زمان تایم‌اوت برای تشخیص گفتار
             audio_data = r.record(source, duration=10) 
-            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=10) # ⬅️ تایم‌اوت طولانی‌تر
+            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=10)
             
     except pydub_exceptions.CouldntFindFFmpeg:
         bot.reply_to(message, "❌ **خطای عدم نصب FFmpeg:** پردازش ویس فعال نیست.", reply_markup=main_menu(message))
         return
     except sr.UnknownValueError:
-        # ⬅️ مدیریت خطای گفتار نامفهوم (nvphg gvvsd)
+        # ⬅️ مدیریت خطای گفتار نامفهوم 
         bot.reply_to(message, "❌ صدای شما به وضوح تشخیص داده نشد. لطفاً واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
         return
     except Exception as e:
-        print(f"Error in Voice Processing: {e}")
+        print(f"Error in Voice Processing: {e}") 
         bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** لطفاً دوباره تلاش کنید.", reply_markup=main_menu(message))
         return
     finally:
