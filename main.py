@@ -21,28 +21,23 @@ from pydantic import BaseModel, Field
 #           *** ۱. تنظیمات عمومی و AI ***
 # ----------------------------------------
 
-# 🚨 امنیت: توکن‌ها را از متغیر محیطی می‌خواند.
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
-# تنظیمات Webhook و Flask
 PORT = int(os.environ.get('PORT', 3000))
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 server = Flask(__name__)
 
-# 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
 
-# تضمین وجود پوشه دیسک
 if not os.path.exists(DATA_FOLDER):
     try:
         os.makedirs(DATA_FOLDER, exist_ok=True)
     except Exception as e:
         print(f"Error creating data folder: {e}")
 
-# 🚨 بررسی توکن و آدرس قبل از راه‌اندازی ربات
 if not TOKEN:
     print("خطا: BOT_TOKEN تنظیم نشده است.")
     exit()
@@ -53,12 +48,10 @@ if not WEBHOOK_URL_BASE:
 bot = telebot.TeleBot(TOKEN)
 BUDGET_MONTHLY = 500000 
 
-# --- تنظیمات Plotting فارسی ---
 rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False 
 
-# --- بارگذاری ایمن داده‌ها ---
 DEFAULT_DATA = {
     "expenses": [], 
     "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
@@ -83,7 +76,6 @@ gemini_client = None
 
 if GEMINI_API_KEY:
     try:
-        # 🌟 اصلاح احراز هویت: ایجاد شیء کلاینت به جای configure
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
         print("✅ Gemini Client initialized successfully.")
     except Exception as e:
@@ -92,7 +84,6 @@ else:
     print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
 
 
-# 🌟 کلاس Pydantic برای تعریف ساختار JSON خروجی
 class ExpenseSchema(BaseModel):
     """اسکیما برای اطمینان از خروجی JSON با ساختار ثابت."""
     amount: int = Field(default=0, description="مبلغ هزینه به تومان، فقط عدد صحیح. عبارات نوشتاری (مانند 'یک میلیون') را تبدیل کند.")
@@ -101,7 +92,6 @@ class ExpenseSchema(BaseModel):
     tags: List[str] = Field(default_factory=list, description="لیست تگ‌های موجود در متن (بدون #).")
 
 
-# 📜 سیستم پرامپت Agent هوشمند
 SMART_AGENT_SYSTEM_PROMPT = f"""
 شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
 شما باید همیشه **مبلغ فارسی نوشتاری** (مانند 'هزار', 'میلیون', 'صد هزار') را به **عدد صحیح و کامل** (بدون کاما) تبدیل کنید.
@@ -127,7 +117,6 @@ def smart_parse_amount_category(text):
             contents=[text],
             config=types.GenerateContentConfig( 
                 system_instruction=SMART_AGENT_SYSTEM_PROMPT,
-                # ⬅️ استفاده از Pydantic برای خروجی تضمین شده
                 response_mime_type="application/json",
                 response_schema=ExpenseSchema
             )
@@ -135,7 +124,6 @@ def smart_parse_amount_category(text):
         
         # 🌟🌟🌟 کد مقاوم‌سازی برای پاکسازی خروجی JSON 🌟🌟🌟
         raw_json_text = response.text.strip()
-        # در صورت وجود، حذف Markdown
         if raw_json_text.startswith("```json"):
             raw_json_text = raw_json_text[7:]
         if raw_json_text.endswith("```"):
@@ -143,10 +131,8 @@ def smart_parse_amount_category(text):
         raw_json_text = raw_json_text.strip()
         # 🌟🌟🌟 پایان کد مقاوم‌سازی 🌟🌟🌟
 
-        # ⬅️ استفاده از متن پاکسازی شده
         parsed_data = ExpenseSchema.model_validate_json(raw_json_text)
         
-        # تبدیل به دیکشنری ساده
         exp_dict = parsed_data.model_dump()
         exp_dict["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
         exp_dict["note"] = exp_dict["note"] or exp_dict["category"] 
@@ -155,7 +141,6 @@ def smart_parse_amount_category(text):
 
     except Exception as e:
         print(f"Gemini/Pydantic Error in smart_parse: {e}")
-        # ⬅️ لاگ کردن متن خام ورودی و متن پاسخ Gemini برای عیب‌یابی بیشتر
         print(f"Input Text: {text}")
         print(f"Gemini Response Text (Raw): {response.text if 'response' in locals() else 'N/A'}")
         return None
@@ -294,6 +279,9 @@ def clear_data(message):
 
 @bot.message_handler(content_types=['voice'])
 def add_expense_voice(message):
+    # ⬅️ اضافه شدن لاگ برای تشخیص اینکه آیا ویس هندلر اجرا می شود یا خیر
+    print(f"✅ Handler for voice message received from chat {message.chat.id}")
+
     if not gemini_client:
         bot.send_message(message.chat.id, "⚠️ **خطا:** کلید GEMINI API تنظیم نشده. نمی‌توانم ویس را پردازش کنم.", reply_markup=main_menu(message))
         return
@@ -319,7 +307,6 @@ def add_expense_voice(message):
         bot.reply_to(message, "❌ **خطای عدم نصب FFmpeg:** پردازش ویس فعال نیست.", reply_markup=main_menu(message))
         return
     except sr.UnknownValueError:
-        # ⬅️ مدیریت خطای گفتار نامفهوم 
         bot.reply_to(message, "❌ صدای شما به وضوح تشخیص داده نشد. لطفاً واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
         return
     except Exception as e:
@@ -350,6 +337,8 @@ def add_expense_voice(message):
 
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def add_expense_text(message):
+    # ⬅️ اضافه شدن لاگ برای تشخیص اینکه آیا متن هندلر اجرا می شود یا خیر
+    print(f"✅ Handler for text message received: {message.text}")
     
     exp = smart_parse_amount_category(message.text)
     
@@ -376,6 +365,9 @@ def get_message():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telegram_types.Update.de_json(json_string) 
+        
+        # ⬅️ لاگ کردن قبل از پردازش
+        print("Received update from Telegram.")
         
         bot.process_new_updates([update])
         return "OK", 200
