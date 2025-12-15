@@ -10,53 +10,48 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from matplotlib import rcParams
 import csv
+from typing import List
 
-# 🚀 اضافه شدن SDK Gemini
+# 🚀 اضافه شدن SDK Gemini و Pydantic
 import google.genai as genai 
 from google.genai import types 
+from pydantic import BaseModel, Field # ⬅️ اضافه شد
 
 # ----------------------------------------
 #           *** ۱. تنظیمات عمومی و AI ***
 # ----------------------------------------
 
-# 🚨 امنیت: توکن‌ها را از متغیر محیطی می‌خواند.
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 
-# تنظیمات Webhook و Flask
 PORT = int(os.environ.get('PORT', 3000))
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 server = Flask(__name__)
 
-# 💡 تنظیم مسیر دیسک پایدار (Volume Mount) در لیارا
 DATA_FOLDER = "/app/data"  
 DATA_FILE = os.path.join(DATA_FOLDER, "data.json")
 
-# تضمین وجود پوشه دیسک
 if not os.path.exists(DATA_FOLDER):
     try:
         os.makedirs(DATA_FOLDER, exist_ok=True)
     except Exception as e:
         print(f"Error creating data folder: {e}")
 
-# 🚨 بررسی توکن و آدرس قبل از راه‌اندازی ربات
 if not TOKEN:
-    print("خطا: BOT_TOKEN تنظیم نشده است. ربات نمی‌تواند به API تلگرام متصل شود.")
+    print("خطا: BOT_TOKEN تنظیم نشده است.")
     exit()
 if not WEBHOOK_URL_BASE:
-    print("خطا: WEBHOOK_URL تنظیم نشده است. ربات نمی‌تواند وب‌هوک را تنظیم کند.")
+    print("خطا: WEBHOOK_URL تنظیم نشده است.")
     exit()
 
 bot = telebot.TeleBot(TOKEN)
 BUDGET_MONTHLY = 500000 
 
-# --- تنظیمات Plotting فارسی ---
 rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 rcParams['axes.unicode_minus'] = False 
 
-# --- بارگذاری ایمن داده‌ها ---
 DEFAULT_DATA = {
     "expenses": [], 
     "categories": ["خوراک", "حمل و نقل", "تفریح", "سایر"],
@@ -77,76 +72,72 @@ if os.path.exists(DATA_FILE):
 #           *** ۲. Agent هوشمند Gemini ***
 # ----------------------------------------
 
-gemini_client = None # ⬅️ تعریف شیء کلاینت به صورت سراسری
+gemini_client = None
 
 if GEMINI_API_KEY:
     try:
-        # 🌟 اصلاح احراز هویت: ایجاد شیء کلاینت به جای configure
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
         print("✅ Gemini Client initialized successfully.")
     except Exception as e:
-        # اگر خطا در اینجا رخ دهد، فقط Client نخواهد داشت و ادامه می‌دهد
         print(f"Error initializing Gemini Client: {e}")
 else:
     print("⚠️ GEMINI_API_KEY تنظیم نشده است. ربات بدون تحلیل هوشمند کار خواهد کرد.")
 
-# 📜 سیستم پرامپت Agent هوشمند
-SMART_AGENT_SYSTEM_PROMPT = """
-شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
-شما باید همیشه **مبلغ فارسی نوشتاری** (مانند 'هزار', 'میلیون', 'صد هزار') را به **عدد صحیح و کامل** (فقط عدد، بدون کاما یا واحد پول) تبدیل کنید.
-خروجی شما باید یک JSON Payload باشد که شامل:
-- 'amount': مبلغ هزینه (به تومان، فقط عدد کامل). اگر مبلغی پیدا نشد، حتماً مقدار آن را صفر (0) بگذارید.
-- 'category': دسته‌بندی اصلی هزینه (مثال: 'خوراک', 'حمل و نقل', 'تفریح', 'پوشاک'). اگر مشخص نبود، 'سایر' بگذارید.
-- 'note': توضیحات یا یادداشت کامل تراکنش. اگر مشخص نبود، از مقدار category استفاده کنید.
-- 'tags': لیست تگ‌های موجود در متن (کلماتی که با # شروع می‌شوند، بدون #).
 
-مثال‌های خروجی مورد انتظار:
-- برای ورودی 'یک میلیون و ۵۵۰ هزار تومان لباس':
-  {"amount": 1550000, "category": "پوشاک", "note": "لباس", "tags": []}
-- برای ورودی '150 هزار رستوران':
-  {"amount": 150000, "category": "خوراک", "note": "رستوران", "tags": []}
+# 🌟 کلاس Pydantic برای تعریف ساختار JSON خروجی
+class ExpenseSchema(BaseModel):
+    """اسکیما برای اطمینان از خروجی JSON با ساختار ثابت."""
+    amount: int = Field(default=0, description="مبلغ هزینه به تومان، فقط عدد صحیح. عبارات نوشتاری (مانند 'یک میلیون') را تبدیل کند.")
+    category: str = Field(default="سایر", description="دسته‌بندی اصلی هزینه.")
+    note: str = Field(default="", description="توضیحات کامل تراکنش.")
+    tags: List[str] = Field(default_factory=list, description="لیست تگ‌های موجود در متن (بدون #).")
+
+
+# 📜 سیستم پرامپت Agent هوشمند
+SMART_AGENT_SYSTEM_PROMPT = f"""
+شما یک Agent هوش مصنوعی هستید که وظیفه استخراج اطلاعات مالی از متن فارسی کاربر را دارید.
+شما باید همیشه **مبلغ فارسی نوشتاری** (مانند 'هزار', 'میلیون', 'صد هزار') را به **عدد صحیح و کامل** (بدون کاما) تبدیل کنید.
+خروجی شما باید منحصراً یک JSON Payload باشد که دقیقاً با Schema زیر مطابقت دارد. از اضافه کردن هرگونه متن، توضیح یا مقدمه خارج از JSON خودداری کنید.
+
+مثال: برای ورودی 'یک میلیون و ۵۵۰ هزار تومان لباس #جدید':
+{{
+  "amount": 1550000,
+  "category": "پوشاک",
+  "note": "لباس",
+  "tags": ["جدید"]
+}}
 """
 
 def smart_parse_amount_category(text):
-    """استخراج مبلغ، دسته و یادداشت با استفاده از Gemini Agent."""
-    if not gemini_client: # ⬅️ استفاده از شیء سراسری
+    """استخراج مبلغ، دسته و یادداشت با استفاده از Gemini Agent و Pydantic."""
+    if not gemini_client:
         return None 
 
     try:
-        # ⬅️ استفاده از شیء سراسری
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash', 
             contents=[text],
             config=types.GenerateContentConfig( 
                 system_instruction=SMART_AGENT_SYSTEM_PROMPT,
-                response_mime_type="application/json"
+                # ⬅️ استفاده از Pydantic برای خروجی تضمین شده
+                response_mime_type="application/json",
+                response_schema=ExpenseSchema
             )
         )
         
-        result = json.loads(response.text)
+        # ⬅️ استفاده مستقیم از Pydantic برای اعتبارسنجی
+        parsed_data = ExpenseSchema.model_validate_json(response.text)
         
-        try:
-            amount = int(result.get("amount", 0))
-        except ValueError:
-            amount = 0 
-            
-        category = result.get("category", "سایر")
-        note = result.get("note", category)
-        tags = result.get("tags", [])
+        # تبدیل به دیکشنری ساده
+        exp_dict = parsed_data.model_dump()
+        exp_dict["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
+        exp_dict["note"] = exp_dict["note"] or exp_dict["category"] # اگر نوت خالی بود، دسته را قرار بده
         
-        return {
-            "amount": amount,
-            "category": category,
-            "note": note,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-            "tags": tags
-        }
+        return exp_dict
 
-    except json.JSONDecodeError:
-        print(f"Agent did not return valid JSON: {response.text}")
-        return None
     except Exception as e:
-        print(f"Gemini API Error in smart_parse: {e}")
+        print(f"Gemini/Pydantic Error in smart_parse: {e}")
+        print(f"Gemini Response Text: {response.text if 'response' in locals() else 'N/A'}")
         return None
 
 
@@ -172,7 +163,7 @@ def save_data():
          print(f"Error saving data to {DATA_FILE}: {e}")
 
 def generate_report(expenses_list, period_name):
-    """تابع تولید گزارش و نمودار."""
+    # ... (تابع گزارش بدون تغییر) ...
     if not expenses_list:
         return f"⚠️ هیچ هزینه‌ای در بازه **{period_name}** ثبت نشده است.", None, None
 
@@ -210,7 +201,6 @@ def generate_report(expenses_list, period_name):
 
 
 def main_menu(message):
-    # ⬅️ استفاده مستقیم از telebot.types برای کیبورد
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
@@ -223,7 +213,6 @@ def main_menu(message):
         "/clear 🔄 پاکسازی"
     ]
     
-    # ⬅️ استفاده از telegram_types برای ساخت دکمه‌ها
     keyboard.row(telegram_types.KeyboardButton(buttons[0]), telegram_types.KeyboardButton(buttons[1]))
     keyboard.row(telegram_types.KeyboardButton(buttons[2]), telegram_types.KeyboardButton(buttons[3]))
     keyboard.row(telegram_types.KeyboardButton(buttons[4]), telegram_types.KeyboardButton(buttons[5]))
@@ -235,11 +224,13 @@ def main_menu(message):
 #            *** ۴. Handlers اصلی ***
 # ----------------------------------------
 
+# 🚨 حذف Handler عیب‌یابی (echo_all) برای فعال شدن دکمه‌ها
+
 @bot.message_handler(commands=['start'])
 def start(message):
     keyboard = main_menu(message)
     bot.send_message(message.chat.id, "سلام! ربات حسابداری هوشمند آماده است.\n"
-                                     "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", reply_markup=keyboard)
+                                     "✅ هزینه‌ها را با **مبلغ و عنوان** (متن یا ویس) ثبت کنید. مثال: ۱۰۰۰۰ نان #نانوایی", parse_mode='Markdown', reply_markup=keyboard)
 
 
 @bot.message_handler(commands=['undo'])
@@ -303,15 +294,20 @@ def add_expense_voice(message):
         
         r = sr.Recognizer()
         with sr.AudioFile(temp_wav_path) as source:
+            # ⬅️ افزایش زمان تایم‌اوت برای تشخیص گفتار
             audio_data = r.record(source, duration=10) 
-            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=7)
+            text = r.recognize_google(audio_data, language="fa-IR", show_all=False, timeout=10) # ⬅️ تایم‌اوت طولانی‌تر
             
     except pydub_exceptions.CouldntFindFFmpeg:
         bot.reply_to(message, "❌ **خطای عدم نصب FFmpeg:** پردازش ویس فعال نیست.", reply_markup=main_menu(message))
         return
+    except sr.UnknownValueError:
+        # ⬅️ مدیریت خطای گفتار نامفهوم (nvphg gvvsd)
+        bot.reply_to(message, "❌ صدای شما به وضوح تشخیص داده نشد. لطفاً واضح‌تر صحبت کنید.", reply_markup=main_menu(message))
+        return
     except Exception as e:
         print(f"Error in Voice Processing: {e}")
-        bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** صدای شما واضح نبود.", reply_markup=main_menu(message))
+        bot.reply_to(message, "❌ **خطا در تبدیل ویس به متن:** لطفاً دوباره تلاش کنید.", reply_markup=main_menu(message))
         return
     finally:
         if os.path.exists(temp_wav_path):
@@ -328,7 +324,7 @@ def add_expense_voice(message):
         save_data()
         bot.reply_to(message, f"✅ هزینه از ویس ثبت شد: {exp['amount']:,.0f} تومان در **{exp['category']}** (یادداشت: {exp['note']})", parse_mode='Markdown', reply_markup=main_menu(message))
     else:
-        bot.reply_to(message, f"❌ متن ویس قابل پردازش نبود یا مبلغ صفر بود. متن تشخیص داده شده: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
+        bot.reply_to(message, f"❌ متن تشخیص داده شده قابل پردازش نبود یا مبلغ صفر بود. متن: **{text}**", parse_mode='Markdown', reply_markup=main_menu(message))
 
 
 # ----------------------------------------
@@ -370,7 +366,6 @@ def get_message():
 
 if __name__ == '__main__':
     
-    # تنظیم مجدد وب‌هوک
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
     
