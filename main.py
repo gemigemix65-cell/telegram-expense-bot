@@ -5,24 +5,15 @@ import os
 import requests
 import json
 from bs4 import BeautifulSoup
-from datetime import datetime
-import jdatetime # برای تاریخ شمسی
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-
-# ⬅️ ایمپورت‌های Selenium برای Scraping محتوای پویا
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import WebDriverException, TimeoutException
-
+import jdatetime 
 from pydantic import BaseModel, Field
 from typing import List
 
 # 🚀 ابزارهای Gemini
 import google.genai as genai 
 from google.genai import types 
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
 
 # ----------------------------------------
 #           *** ۱. تنظیمات عمومی و API ***
@@ -37,7 +28,6 @@ PORT = int(os.environ.get('PORT', 3000))
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 server = Flask(__name__)
 
-# بررسی متغیرهای محیطی
 if not TOKEN or not WEBHOOK_URL_BASE:
     print("خطا: BOT_TOKEN یا WEBHOOK_URL تنظیم نشده‌اند.")
     exit()
@@ -58,95 +48,108 @@ if GEMINI_API_KEY:
         print(f"Error initializing Gemini Client: {e}")
 
 # ----------------------------------------
-#           *** ۲. توابع کمکی Scraping و تحلیل ***
+#           *** ۲. واکشی داده‌ها (Scraping Iranjib.ir) ***
 # ----------------------------------------
 
-def clean_and_convert(price_text, is_float=False, is_rial_price=False):
-    """پاکسازی متن قیمت و تبدیل به عدد صحیح/تومان."""
+# 🚨 آدرس جدید برای Scraping
+IRANJIB_URL = "https://www.iranjib.ir/showgroup/23/realtime_price/" 
+
+def clean_and_convert(price_text):
+    """پاکسازی متن قیمت از کاما و تبدیل به عدد صحیح."""
     if not price_text: return 0
-    cleaned_text = price_text.replace(',', '').replace('ریال', '').replace('تومان', '').strip()
+    cleaned_text = price_text.replace(',', '').replace('تومان', '').replace('ریال', '').strip()
     try:
-        if is_float:
-            return float(cleaned_text)
-        else:
-            value = int(float(cleaned_text))
-            if is_rial_price:
-                # 🚨 تبدیل از ریال به تومان (تقسیم بر 10)
-                return value // 10
-            return value
+        # قیمت دلار و انس معمولاً در این سایت به تومان/دلار نمایش داده می‌شود 
+        # و نیازی به تقسیم بر 10 نیست (بررسی ساختار سایت)
+        return int(float(cleaned_text))
     except ValueError:
         return 0
 
-def get_selenium_driver():
-    """ایجاد و راه‌اندازی درایور کروم Headless در محیط داکر."""
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("user-agent=Mozilla/5.0...") 
-    
-    # 🚨 مسیر درایور در کانتینر داکر (بر اساس Dockerfile)
-    service = Service("/usr/local/bin/chromedriver") 
-    
-    return webdriver.Chrome(service=service, options=chrome_options)
-
+def clean_and_convert_float(price_text):
+    """پاکسازی متن و تبدیل به عدد اعشاری (برای انس جهانی)."""
+    if not price_text: return 0.0
+    cleaned_text = price_text.replace(',', '').strip()
+    try:
+        return float(cleaned_text)
+    except ValueError:
+        return 0.0
 
 def fetch_gold_data():
-    """واکشی داده‌های لحظه‌ای با استفاده از Selenium (برای محتوای JS)."""
-    driver = None
+    """واکشی داده‌ها با Scraping از Iranjib.ir."""
     try:
-        driver = get_selenium_driver()
-        driver.set_page_load_timeout(30) # زمان انتظار برای بارگذاری
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(IRANJIB_URL, headers=headers, timeout=10)
+        response.raise_for_status() 
         
-        # 1. بارگذاری صفحه
-        driver.get("https://www.tgju.org/")
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 2. استخراج قیمت‌ها با ID
-        # از آنجا که Selenium JS را اجرا می‌کند، IDهای نهایی قیمت‌ها باید قابل دسترسی باشند.
+        # 1. استخراج قیمت‌های کلیدی بر اساس کلاس‌های CSS (که کمتر تغییر می‌کنند)
+        # این سایت قیمت‌ها را در جدول با کلاس main-table-col-2 نگه می‌دارد.
         
-        price_18k_text = driver.find_element(By.ID, 'l-geram18').text
-        price_sekeh_text = driver.find_element(By.ID, 'l-sekee').text
-        price_usd_text = driver.find_element(By.ID, 'l-price_dollar_rl').text
-        price_ounce_text = driver.find_element(By.ID, 'l-ons').text
+        # دیکشنری نگاشت نام کالا به شاخص جدول (باید با ساختار Iranjib.ir چک شود)
+        # ما از سلکتورهای قوی استفاده می کنیم
+        
+        data_map = {}
+        
+        # تمام سطرها را در جدول اصلی پیدا می کنیم
+        table_rows = soup.find_all('tr', class_=lambda x: x and ('group-row' in x or 'showgroup-23' in x))
 
+        for row in table_rows:
+            try:
+                # اولین ستون نام کالا
+                name_element = row.find('td', class_='main-table-col-1')
+                # دومین ستون قیمت
+                price_element = row.find('td', class_='main-table-col-2')
+                
+                if name_element and price_element:
+                    name = name_element.text.strip()
+                    price = price_element.text.strip()
+                    
+                    if 'گرم ۱۸ عیار' in name:
+                        data_map['gold_18k_gram'] = clean_and_convert(price)
+                    elif 'سکه امامی' in name:
+                        data_map['sekeh_emami'] = clean_and_convert(price)
+                    elif 'دلار' in name and ('آمریکا' in name or 'آزاد' in name):
+                        data_map['usd_rial'] = clean_and_convert(price)
+                    elif 'انس' in name and 'جهانی' in name:
+                        # انس جهانی اعشاری است
+                        data_map['ounce_usd'] = clean_and_convert_float(price)
+            except:
+                continue
+
+        # 🚨 تضمین وجود داده‌ها (استفاده از get برای جلوگیری از خطا)
         data = {
             "time": jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M"), 
+            "gold_18k_gram": data_map.get('gold_18k_gram', 0), 
+            "sekeh_emami": data_map.get('sekeh_emami', 0), 
+            "usd_rial": data_map.get('usd_rial', 0),      
+            "ounce_usd": data_map.get('ounce_usd', 0.0), 
             
-            # 🚨 تبدیل قیمت‌های داخلی (ریال) به تومان
-            "gold_18k_gram": clean_and_convert(price_18k_text, is_rial_price=True), 
-            "sekeh_emami": clean_and_convert(price_sekeh_text, is_rial_price=True), 
-            "usd_rial": clean_and_convert(price_usd_text, is_rial_price=True),      
-            
-            # انس جهانی به دلار است و بدون تبدیل ریال به تومان می‌ماند
-            "ounce_usd": clean_and_convert(price_ounce_text, is_float=True, is_rial_price=False), 
-            
-            # Mock داده‌های گذشته (نیاز به پیاده‌سازی تاریخچه واقعی است)
-            "yesterday_18k": clean_and_convert(price_18k_text, is_rial_price=True), 
-            "week_ago_18k": clean_and_convert(price_18k_text, is_rial_price=True),
+            # Mock داده‌های گذشته (نیاز به پیاده‌سازی تاریخچه واقعی دارد)
+            "yesterday_18k": data_map.get('gold_18k_gram', 0), 
+            "week_ago_18k": data_map.get('gold_18k_gram', 0),
         }
         
         print(f"✅ Scraping successful: 18K Gold Price: {data['gold_18k_gram']} Toman")
+        
         return data
         
-    except (WebDriverException, TimeoutException) as e:
-        print(f"❌ Selenium Error (Browser/Timeout): {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Network/Request Error during Scraping: {e}")
         return None
     except Exception as e:
-        print(f"❌ Scraping/Parsing Error (Element not found): {e}")
+        print(f"❌ Scraping/Parsing Error: {e}")
         return None
-    finally:
-        if driver:
-            driver.quit() # بستن درایور برای مدیریت منابع
 
 def calculate_bubble(data):
     """محاسبه حباب طلای ۱۸ عیار بر اساس فرمول تئوریک."""
     if not data: return None
     gold_18k_now = data.get("gold_18k_gram", 0)
+    # 🚨 در iranjib قیمت داخلی (دلار) به تومان است.
     usd_toman_now = data.get("usd_rial", 0) 
     ounce_usd_now = data.get("ounce_usd", 0)
-
-    # تبدیل قیمت دلار از تومان به ریال برای استفاده در فرمول
+    
+    # برای فرمول تئوریک: قیمت دلار (تومان) * ۱۰ = قیمت دلار (ریال)
     usd_rial_for_calc = usd_toman_now * 10 
     
     if ounce_usd_now <= 0 or usd_rial_for_calc <= 0:
@@ -186,7 +189,6 @@ def format_comparison(now, past, name):
         
     return f"**{name}**: {now:,.0f} تومان {indicator} ({trend})"
 
-
 # ----------------------------------------
 #           *** ۳. Agent تحلیل بازار (Gemini) ***
 # ----------------------------------------
@@ -211,7 +213,6 @@ def get_market_analysis(market_data):
     if not gemini_client:
         return "⚠️ Agent AI غیرفعال است (GEMINI_API_KEY تنظیم نشده).", None
 
-    # بررسی برای جلوگیری از ارسال داده‌های صفر
     if market_data.get('gold_18k_gram', 0) == 0:
          return "❌ داده‌های قیمتی صفر هستند و تحلیل امکان‌پذیر نیست.", None
          
