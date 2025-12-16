@@ -6,9 +6,17 @@ import requests
 import json
 from bs4 import BeautifulSoup
 from datetime import datetime
-import jdatetime # ⬅️ استفاده از تاریخ شمسی
+import jdatetime # برای تاریخ شمسی
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
+
+# ⬅️ ایمپورت‌های Selenium برای Scraping محتوای پویا
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException, TimeoutException
+
 from pydantic import BaseModel, Field
 from typing import List
 
@@ -29,10 +37,7 @@ PORT = int(os.environ.get('PORT', 3000))
 WEBHOOK_URL_PATH = f"/{TOKEN}" 
 server = Flask(__name__)
 
-DATA_FOLDER = "/app/data" 
-if not os.path.exists(DATA_FOLDER):
-    os.makedirs(DATA_FOLDER, exist_ok=True)
-
+# بررسی متغیرهای محیطی
 if not TOKEN or not WEBHOOK_URL_BASE:
     print("خطا: BOT_TOKEN یا WEBHOOK_URL تنظیم نشده‌اند.")
     exit()
@@ -53,16 +58,15 @@ if GEMINI_API_KEY:
         print(f"Error initializing Gemini Client: {e}")
 
 # ----------------------------------------
-#           *** ۲. واکشی داده‌ها (Scraping Tgju.org) ***
+#           *** ۲. توابع کمکی Scraping و تحلیل ***
 # ----------------------------------------
 
 def clean_and_convert(price_text, is_float=False, is_rial_price=False):
-    """پاکسازی متن قیمت از کاما و ریال و تبدیل به عدد صحیح/تومان."""
+    """پاکسازی متن قیمت و تبدیل به عدد صحیح/تومان."""
     if not price_text: return 0
     cleaned_text = price_text.replace(',', '').replace('ریال', '').replace('تومان', '').strip()
     try:
         if is_float:
-            # برای انس جهانی
             return float(cleaned_text)
         else:
             value = int(float(cleaned_text))
@@ -73,83 +77,78 @@ def clean_and_convert(price_text, is_float=False, is_rial_price=False):
     except ValueError:
         return 0
 
+def get_selenium_driver():
+    """ایجاد و راه‌اندازی درایور کروم Headless در محیط داکر."""
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("user-agent=Mozilla/5.0...") 
+    
+    # 🚨 مسیر درایور در کانتینر داکر (بر اساس Dockerfile)
+    service = Service("/usr/local/bin/chromedriver") 
+    
+    return webdriver.Chrome(service=service, options=chrome_options)
+
+
 def fetch_gold_data():
-    """واکشی داده‌های لحظه‌ای طلا، سکه، و دلار با Scraping از Tgju.org."""
+    """واکشی داده‌های لحظه‌ای با استفاده از Selenium (برای محتوای JS)."""
+    driver = None
     try:
-        headers = {
-            # استفاده از User-Agent برای شبیه‌سازی مرورگر
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get("https://www.tgju.org/", headers=headers, timeout=10)
-        response.raise_for_status() 
+        driver = get_selenium_driver()
+        driver.set_page_load_timeout(30) # زمان انتظار برای بارگذاری
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 1. بارگذاری صفحه
+        driver.get("https://www.tgju.org/")
         
-        # 1. استخراج قیمت‌های کلیدی با استفاده از دو ID متداول برای مقاومت
+        # 2. استخراج قیمت‌ها با ID
+        # از آنجا که Selenium JS را اجرا می‌کند، IDهای نهایی قیمت‌ها باید قابل دسترسی باشند.
         
-        # طلای 18 عیار (هر گرم)
-        price_18k_element = soup.find('span', {'id': 'l-geram18'})
-        if not price_18k_element:
-            price_18k_element = soup.find('span', {'id': 'l-price_geram18'}) # ID جایگزین
-        price_18k_text = price_18k_element.text if price_18k_element else None
-        
-        # سکه امامی
-        price_sekeh_element = soup.find('span', {'id': 'l-sekee'})
-        price_sekeh_text = price_sekeh_element.text if price_sekeh_element else None
-        
-        # دلار آمریکا (آزاد)
-        price_usd_element = soup.find('span', {'id': 'l-price_dollar_rl'})
-        if not price_usd_element:
-            price_usd_element = soup.find('span', {'id': 'l-dollar'}) # ID جایگزین
-        price_usd_text = price_usd_element.text if price_usd_element else None
-        
-        # انس جهانی
-        price_ounce_element = soup.find('span', {'id': 'l-ons'})
-        price_ounce_text = price_ounce_element.text if price_ounce_element else None
-        
+        price_18k_text = driver.find_element(By.ID, 'l-geram18').text
+        price_sekeh_text = driver.find_element(By.ID, 'l-sekee').text
+        price_usd_text = driver.find_element(By.ID, 'l-price_dollar_rl').text
+        price_ounce_text = driver.find_element(By.ID, 'l-ons').text
+
         data = {
-            # ⬅️ نمایش تاریخ و زمان به شمسی
             "time": jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M"), 
             
-            # 🚨 قیمت‌های داخلی (ریال) به تومان تبدیل می‌شوند
+            # 🚨 تبدیل قیمت‌های داخلی (ریال) به تومان
             "gold_18k_gram": clean_and_convert(price_18k_text, is_rial_price=True), 
             "sekeh_emami": clean_and_convert(price_sekeh_text, is_rial_price=True), 
             "usd_rial": clean_and_convert(price_usd_text, is_rial_price=True),      
             
-            # 🚨 انس جهانی به دلار است و نباید تبدیل شود
+            # انس جهانی به دلار است و بدون تبدیل ریال به تومان می‌ماند
             "ounce_usd": clean_and_convert(price_ounce_text, is_float=True, is_rial_price=False), 
             
-            # Mock داده‌های گذشته (نیاز به پیاده‌سازی تاریخچه واقعی دارد)
+            # Mock داده‌های گذشته (نیاز به پیاده‌سازی تاریخچه واقعی است)
             "yesterday_18k": clean_and_convert(price_18k_text, is_rial_price=True), 
             "week_ago_18k": clean_and_convert(price_18k_text, is_rial_price=True),
         }
         
         print(f"✅ Scraping successful: 18K Gold Price: {data['gold_18k_gram']} Toman")
-        
-        # اگر قیمت واکشی شده هنوز صفر است، لاگ هشدار قوی‌تری می‌دهیم
-        if data['gold_18k_gram'] == 0:
-             print("❌ FATAL SCRAPING ERROR: The extracted gold price is zero. The website structure may have fundamentally changed.")
-        
         return data
         
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Network/Request Error during Scraping: {e}")
+    except (WebDriverException, TimeoutException) as e:
+        print(f"❌ Selenium Error (Browser/Timeout): {e}")
         return None
     except Exception as e:
-        print(f"❌ Scraping/Parsing Error: {e}")
+        print(f"❌ Scraping/Parsing Error (Element not found): {e}")
         return None
+    finally:
+        if driver:
+            driver.quit() # بستن درایور برای مدیریت منابع
 
 def calculate_bubble(data):
     """محاسبه حباب طلای ۱۸ عیار بر اساس فرمول تئوریک."""
     if not data: return None
     gold_18k_now = data.get("gold_18k_gram", 0)
-    usd_toman_now = data.get("usd_rial", 0) # این قیمت دلار اکنون به تومان است
-
-    # برای محاسبات تئوریک (که بر پایه ریال است) باید قیمت تومانی دلار * 10 شود
-    usd_rial_for_calc = usd_toman_now * 10 
+    usd_toman_now = data.get("usd_rial", 0) 
     ounce_usd_now = data.get("ounce_usd", 0)
+
+    # تبدیل قیمت دلار از تومان به ریال برای استفاده در فرمول
+    usd_rial_for_calc = usd_toman_now * 10 
     
-    # 🚨 محافظت در برابر داده‌های صفر
     if ounce_usd_now <= 0 or usd_rial_for_calc <= 0:
         theoretical_gold_18k_toman = 0
     else:
@@ -192,7 +191,6 @@ def format_comparison(now, past, name):
 #           *** ۳. Agent تحلیل بازار (Gemini) ***
 # ----------------------------------------
 
-# 🌟 اسکیما برای تضمین خروجی Agent
 class AnalysisSchema(BaseModel):
     summary: str = Field(description="خلاصه وضعیت فعلی بازار طلا (صعودی، نزولی یا خنثی).")
     advice: str = Field(description="مشاوره نهایی: 'خرید', 'فروش', یا 'صبر و تماشا'.")
@@ -213,6 +211,10 @@ def get_market_analysis(market_data):
     if not gemini_client:
         return "⚠️ Agent AI غیرفعال است (GEMINI_API_KEY تنظیم نشده).", None
 
+    # بررسی برای جلوگیری از ارسال داده‌های صفر
+    if market_data.get('gold_18k_gram', 0) == 0:
+         return "❌ داده‌های قیمتی صفر هستند و تحلیل امکان‌پذیر نیست.", None
+         
     prompt_with_data = MARKET_ANALYSIS_PROMPT.format(market_data=json.dumps(market_data, indent=2))
     
     try:
@@ -226,7 +228,7 @@ def get_market_analysis(market_data):
             )
         )
         
-        # مقاوم‌سازی JSON
+        # مقاوم‌سازی JSON (حذف Markdown)
         raw_json_text = response.text.strip()
         if raw_json_text.startswith("```json"):
             raw_json_text = raw_json_text[7:]
@@ -239,43 +241,40 @@ def get_market_analysis(market_data):
 
     except Exception as e:
         print(f"❌ Gemini Market Analysis Error: {e}")
-        # لاگ برای تشخیص مشکل Pydantic
-        print(f"Raw Gemini Response: {response.text if 'response' in locals() else 'N/A'}")
         return "❌ خطا در تحلیل هوشمند بازار. لطفاً دقایقی دیگر امتحان کنید.", None
 
 
 # ----------------------------------------
-#           *** ۴. Handlers تلگرام ***
+#           *** ۴. Handlers تلگرام و Webhook ***
 # ----------------------------------------
 
-@bot.message_handler(commands=['start'])
-def start(message):
+def main_menu():
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    
     buttons = [
         "/price 💰 قیمت لحظه‌ای",
         "/bubble ⚪️ حباب طلا",
         "/advice 🧠 مشاوره بازار", 
     ]
-    
     keyboard.row(telegram_types.KeyboardButton(buttons[0]), telegram_types.KeyboardButton(buttons[1]))
     keyboard.row(telegram_types.KeyboardButton(buttons[2]))
-    
+    return keyboard
+
+
+@bot.message_handler(commands=['start'])
+def start(message):
     bot.send_message(message.chat.id, "سلام! به ربات تحلیلگر طلا و ارز خوش آمدید.\n"
-                                     "از دکمه‌های زیر برای دریافت قیمت‌های لحظه‌ای و مشاوره بازار استفاده کنید.", parse_mode='Markdown', reply_markup=keyboard)
+                                     "از دکمه‌های زیر برای دریافت قیمت‌های لحظه‌ای و مشاوره بازار استفاده کنید.", parse_mode='Markdown', reply_markup=main_menu())
 
 
 @bot.message_handler(commands=['price'])
 def show_price(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        # در صورت شکست، دکمه‌ها را دوباره نشان می‌دهیم
-        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد یا Scraping با خطا مواجه شده است.", reply_markup=start(message).reply_markup)
+        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد یا Scraping با خطا مواجه شده است.", reply_markup=main_menu())
         return
 
     report = f"🟡 **قیمت‌های لحظه‌ای طلا و ارز** ({data['time']})\n\n"
     
-    # 🚨 نمایش همه قیمت‌های داخلی به تومان است
     report += f"**🥇 طلای ۱۸ عیار (هر گرم):** {data['gold_18k_gram']:,.0f} تومان\n"
     report += f"**👑 سکه امامی (طرح جدید):** {data['sekeh_emami']:,.0f} تومان\n"
     report += f"**💵 دلار آمریکا (آزاد):** {data['usd_rial']:,.0f} تومان\n"
@@ -285,14 +284,14 @@ def show_price(message):
     report += format_comparison(data['gold_18k_gram'], data['yesterday_18k'], "مقایسه با دیروز") + "\n"
     report += format_comparison(data['gold_18k_gram'], data['week_ago_18k'], "مقایسه با هفته قبل") + "\n"
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
+    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=main_menu())
 
 
 @bot.message_handler(commands=['bubble'])
 def show_bubble(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد.", reply_markup=start(message).reply_markup)
+        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد.", reply_markup=main_menu())
         return
         
     bubble_data = calculate_bubble(data)
@@ -308,14 +307,14 @@ def show_bubble(message):
     report += f"**⚖️ میزان حباب:** **{abs(bubble_percent):.2f}%**\n\n"
     report += "ℹ️ حباب مثبت نشان‌دهنده تقاضای بیشتر از عرضه داخلی است."
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
+    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=main_menu())
 
 
 @bot.message_handler(commands=['advice'])
 def get_advice(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        bot.send_message(message.chat.id, "❌ امکان واکشی داده‌های بازار برای تحلیل وجود ندارد.", reply_markup=start(message).reply_markup)
+        bot.send_message(message.chat.id, "❌ امکان واکشی داده‌های بازار برای تحلیل وجود ندارد.", reply_markup=main_menu())
         return
 
     # 1. داده‌ها را برای Agent آماده می‌کنیم (شامل حباب)
@@ -329,7 +328,7 @@ def get_advice(message):
     error_msg, analysis = get_market_analysis(full_market_data)
     
     if error_msg:
-        bot.send_message(message.chat.id, error_msg, reply_markup=start(message).reply_markup)
+        bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
         return
 
     # 3. نمایش نتیجه تحلیل
@@ -337,7 +336,6 @@ def get_advice(message):
     
     advice_report += f"**خلاصه وضعیت:** {analysis['summary']}\n\n"
     
-    # تنظیم رنگ پیشنهاد نوسان‌گیری
     advice_text = analysis['advice'].lower()
     if 'خرید' in advice_text:
         indicator = "✅"
@@ -350,10 +348,10 @@ def get_advice(message):
     advice_report += f"**دلیل تحلیل:** {analysis['reason']}\n\n"
     advice_report += "⚠️ این تحلیل بر اساس داده‌های لحظه‌ای و مدل AI است و مسئولیت تصمیم نهایی با شماست."
 
-    bot.send_message(message.chat.id, advice_report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
+    bot.send_message(message.chat.id, advice_report, parse_mode='Markdown', reply_markup=main_menu())
 
 # ----------------------------------------
-#           *** ۵. اجرای ربات در لیارا (Webhook) ***
+#           *** ۵. اجرای سرور Webhook ***
 # ----------------------------------------
 
 @server.route(WEBHOOK_URL_PATH, methods=['POST'])
