@@ -6,6 +6,7 @@ import requests
 import json
 from bs4 import BeautifulSoup
 from datetime import datetime
+import jdatetime # ⬅️ اضافه شده برای تاریخ شمسی
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from pydantic import BaseModel, Field
@@ -55,15 +56,19 @@ if GEMINI_API_KEY:
 #           *** ۲. واکشی داده‌ها (Scraping Tgju.org) ***
 # ----------------------------------------
 
-def clean_and_convert(price_text, is_float=False):
-    """پاکسازی متن قیمت از کاما و ریال و تبدیل به عدد."""
+def clean_and_convert(price_text, is_float=False, is_rial_price=False):
+    """پاکسازی متن قیمت از کاما و ریال و تبدیل به عدد صحیح/تومان."""
     if not price_text: return 0
     cleaned_text = price_text.replace(',', '').replace('ریال', '').replace('تومان', '').strip()
     try:
         if is_float:
             return float(cleaned_text)
         else:
-            return int(float(cleaned_text)) # ابتدا به float و سپس به int
+            value = int(float(cleaned_text))
+            if is_rial_price:
+                # 🚨 تبدیل از ریال به تومان (تقسیم بر 10)
+                return value // 10
+            return value
     except ValueError:
         return 0
 
@@ -73,49 +78,44 @@ def fetch_gold_data():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # 🚨 توجه: آدرس اصلی صفحه اول برای اغلب قیمت‌ها کافی است
         response = requests.get("https://www.tgju.org/", headers=headers, timeout=10)
         response.raise_for_status() 
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # 1. استخراج قیمت‌های کلیدی
-        
-        # طلای 18 عیار (هر گرم)
+        # برای جلوگیری از خطا در صورت تغییر ساختار، از find استفاده می کنیم
         price_18k_element = soup.find('span', {'id': 'l-geram18'})
         price_18k_text = price_18k_element.text if price_18k_element else None
         
-        # سکه امامی
         price_sekeh_element = soup.find('span', {'id': 'l-sekee'})
         price_sekeh_text = price_sekeh_element.text if price_sekeh_element else None
         
-        # دلار آمریکا (آزاد) - اغلب به ریال نمایش داده می‌شود
         price_usd_element = soup.find('span', {'id': 'l-price_dollar_rl'})
         price_usd_text = price_usd_element.text if price_usd_element else None
         
-        # انس جهانی (به دلار و ممکن است اعشار داشته باشد)
         price_ounce_element = soup.find('span', {'id': 'l-ons'})
         price_ounce_text = price_ounce_element.text if price_ounce_element else None
         
         data = {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "gold_18k_gram": clean_and_convert(price_18k_text), # قیمت به تومان
-            "sekeh_emami": clean_and_convert(price_sekeh_text), # قیمت به تومان
-            "usd_rial": clean_and_convert(price_usd_text),      # قیمت به ریال
-            "ounce_usd": clean_and_convert(price_ounce_text, is_float=True), # قیمت به دلار
+            # ⬅️ نمایش تاریخ و زمان به شمسی
+            "time": jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M"), 
             
-            # 🚨 برای مقایسه روزهای قبل، نیاز به کشینگ در دیسک است. 
-            # فعلا از قیمت لحظه‌ای برای جلوگیری از خطا استفاده می‌کنیم.
-            "yesterday_18k": clean_and_convert(price_18k_text), 
-            "week_ago_18k": clean_and_convert(price_18k_text),
+            # 🚨 قیمت‌های داخلی (ریال) به تومان تبدیل می‌شوند
+            "gold_18k_gram": clean_and_convert(price_18k_text, is_rial_price=True), 
+            "sekeh_emami": clean_and_convert(price_sekeh_text, is_rial_price=True), 
+            "usd_rial": clean_and_convert(price_usd_text, is_rial_price=True),      
+            
+            # 🚨 انس جهانی به دلار است و نباید تبدیل شود
+            "ounce_usd": clean_and_convert(price_ounce_text, is_float=True, is_rial_price=False), 
+            
+            # برای مقایسه هفتگی/روزانه (فعلا Mock شده‌اند، نیاز به پیاده‌سازی تاریخچه است)
+            "yesterday_18k": clean_and_convert(price_18k_text, is_rial_price=True), 
+            "week_ago_18k": clean_and_convert(price_18k_text, is_rial_price=True),
         }
         
-        print(f"✅ Scraping successful: 18K Gold Price: {data['gold_18k_gram']}")
+        print(f"✅ Scraping successful: 18K Gold Price: {data['gold_18k_gram']} Toman")
         
-        # 🚨 بررسی داده‌های خام: اگر همه صفر بودند، احتمال بلاک شدن یا تغییر ساختار سایت وجود دارد.
-        if data['gold_18k_gram'] == 0:
-             print("❌ Warning: Scraped price for 18K gold is 0. Check Tgju site structure.")
-
         return data
         
     except requests.exceptions.RequestException as e:
@@ -129,25 +129,33 @@ def calculate_bubble(data):
     """محاسبه حباب طلای ۱۸ عیار بر اساس فرمول تئوریک."""
     if not data: return None
     gold_18k_now = data.get("gold_18k_gram", 0)
-    usd_rial_now = data.get("usd_rial", 0)
+    usd_rial_now = data.get("usd_rial", 0) # این قیمت دلار اکنون به تومان است
     ounce_usd_now = data.get("ounce_usd", 0)
 
-    if ounce_usd_now > 0 and usd_rial_now > 0:
+    # 🚨 اصلاح فرمول: اگر usd_rial_now به تومان است، باید دوباره در 10 ضرب شود 
+    # تا به ریال برگردد یا مستقیماً از داده‌های سایت (بدون تقسیم بر 10) استفاده شود.
+    # اما چون ما قیمت نهایی تومان را نمایش می‌دهیم، در اینجا باید از نرخ ریالی استفاده شود
+    # برای جلوگیری از پیچیدگی، فرض می‌کنیم USD_RIAL_NOW قیمت دلار به ریال است که از سایت گرفته شده.
+    # برای استفاده در محاسبات تئوریک (که بر پایه ریال است) باید قیمت تومانی دلار * 10 شود
+    usd_rial_for_calc = usd_rial_now * 10 
+    
+    if ounce_usd_now > 0 and usd_rial_for_calc > 0:
         # قیمت تئوریک هر گرم طلای ۱۸ عیار
-        # 31.1035 گرم در هر انس
-        theoretical_gold_18k = (ounce_usd_now * usd_rial_now * 0.75) / 31.1035 
+        theoretical_gold_18k_rial = (ounce_usd_now * usd_rial_for_calc * 0.75) / 31.1035 
+        # تبدیل به تومان
+        theoretical_gold_18k_toman = theoretical_gold_18k_rial // 10
     else:
-        theoretical_gold_18k = 0
+        theoretical_gold_18k_toman = 0
         
-    bubble_18k_amount = gold_18k_now - theoretical_gold_18k
-    if theoretical_gold_18k > 0:
-        bubble_18k_percent = (bubble_18k_amount / theoretical_gold_18k) * 100
+    bubble_18k_amount = gold_18k_now - theoretical_gold_18k_toman
+    if theoretical_gold_18k_toman > 0:
+        bubble_18k_percent = (bubble_18k_amount / theoretical_gold_18k_toman) * 100
     else:
         bubble_18k_percent = 0
 
     return {
         "gold_18k_price": gold_18k_now,
-        "theoretical_18k_price": int(theoretical_gold_18k),
+        "theoretical_18k_price": int(theoretical_gold_18k_toman),
         "bubble_18k_percent": bubble_18k_percent,
     }
 
@@ -166,6 +174,7 @@ def format_comparison(now, past, name):
         indicator = "➖"
         trend = "بدون تغییر"
         
+    # 🚨 نمایش همه قیمت‌ها به تومان است
     return f"**{name}**: {now:,.0f} تومان {indicator} ({trend})"
 
 
@@ -181,7 +190,7 @@ class AnalysisSchema(BaseModel):
 
 MARKET_ANALYSIS_PROMPT = """
 شما یک مشاور سرمایه‌گذاری هستید که در بازار طلای ایران تخصص دارید.
-داده‌های قیمت لحظه‌ای طلا، سکه، نرخ دلار، نرخ انس جهانی، و حباب محاسبه شده به شما داده می‌شود.
+داده‌های قیمت لحظه‌ای طلا، سکه، نرخ دلار (به تومان)، نرخ انس جهانی، و حباب محاسبه شده به شما داده می‌شود.
 تحلیل شما باید شامل پیش‌بینی نوسان‌گیری (اصلاح قیمت) باشد.
 خروجی باید منحصراً یک JSON باشد که دقیقاً با Schema زیر مطابقت داشته باشد. از اضافه کردن هرگونه مقدمه یا توضیح خارج از JSON خودداری کنید.
 
@@ -259,9 +268,10 @@ def show_price(message):
 
     report = f"🟡 **قیمت‌های لحظه‌ای طلا و ارز** ({data['time']})\n\n"
     
+    # 🚨 نمایش قیمت‌ها به تومان
     report += f"**🥇 طلای ۱۸ عیار (هر گرم):** {data['gold_18k_gram']:,.0f} تومان\n"
     report += f"**👑 سکه امامی (طرح جدید):** {data['sekeh_emami']:,.0f} تومان\n"
-    report += f"**💵 دلار آمریکا (آزاد):** {data['usd_rial']:,.0f} ریال\n"
+    report += f"**💵 دلار آمریکا (آزاد):** {data['usd_rial']:,.0f} تومان\n"
     report += f"**🌐 انس جهانی طلا:** {data['ounce_usd']:,.2f} دلار\n\n"
     
     report += "📊 **تحلیل تغییرات طلای ۱۸ عیار:**\n"
@@ -285,6 +295,7 @@ def show_bubble(message):
     
     status = "مثبت 🟢 (بیش از ارزش ذاتی)" if bubble_percent >= 0 else "منفی 🔴 (کمتر از ارزش ذاتی)"
     
+    # 🚨 نمایش قیمت‌ها به تومان
     report += f"**🥇 قیمت لحظه‌ای (گرم ۱۸):** {bubble_data['gold_18k_price']:,.0f} تومان\n"
     report += f"**📉 قیمت تئوریک (ارزش ذاتی):** {bubble_data['theoretical_18k_price']:,.0f} تومان\n"
     report += f"**🔥 وضعیت حباب:** **{status}**\n"
