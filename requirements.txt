@@ -6,3 +6,4 @@ google-genai    # ⬅️ بازگشت Agent AI
 pydantic        # ⬅️ برای تحلیل ساختاریافته توسط AI
 matplotlib
 jdatetime
+selenium
