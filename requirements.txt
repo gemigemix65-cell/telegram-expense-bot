@@ -1,21 +1,7 @@
-# 1. اجرای ربات تلگرام و Webhook در لیارا
-pyTelegramBotAPI
+pytelegrambotapi
 Flask
-
-# 2. هوشمندسازی ربات و تحلیل متن با Gemini API (سطح رایگان)
-google-genai
-
-# 3. پردازش و رونویسی ویس
-SpeechRecognition
-pydub
-
-# 4. پیش نیازهای رونویسی ویس (برای تبدیل فرمت OGG/OGA به WAV)
-# 🚨 توجه: FFmpeg یک کتابخانه سیستمی است و باید به صورت دستی 
-# در Dockerfile یا محیط لیارا نصب شود. این خط صرفاً یادآوری است
-# اما برای اجرا در پایتون، پکیج‌های زیر نیاز هستند:
-# -- pydub به ffmpeg نیاز دارد، اما خود کتابخانه پایتونی نیست.
-# -- مطمئن شوید در Dockerfile یا تنظیمات لیارا FFmpeg را نصب کرده اید.
-
-# 5. گزارش‌دهی و نمودارها (نمودار دایره‌ای)
+requests
+beautifulsoup4  # ⬅️ اضافه شد برای Scraping
+google-genai    # ⬅️ بازگشت Agent AI
+pydantic        # ⬅️ برای تحلیل ساختاریافته توسط AI
 matplotlib
-pydantic
