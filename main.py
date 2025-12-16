@@ -6,7 +6,7 @@ import requests
 import json
 from bs4 import BeautifulSoup
 from datetime import datetime
-import jdatetime # ⬅️ اضافه شده برای تاریخ شمسی
+import jdatetime # ⬅️ استفاده از تاریخ شمسی
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from pydantic import BaseModel, Field
@@ -62,6 +62,7 @@ def clean_and_convert(price_text, is_float=False, is_rial_price=False):
     cleaned_text = price_text.replace(',', '').replace('ریال', '').replace('تومان', '').strip()
     try:
         if is_float:
+            # برای انس جهانی
             return float(cleaned_text)
         else:
             value = int(float(cleaned_text))
@@ -76,6 +77,7 @@ def fetch_gold_data():
     """واکشی داده‌های لحظه‌ای طلا، سکه، و دلار با Scraping از Tgju.org."""
     try:
         headers = {
+            # استفاده از User-Agent برای شبیه‌سازی مرورگر
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         response = requests.get("https://www.tgju.org/", headers=headers, timeout=10)
@@ -83,17 +85,25 @@ def fetch_gold_data():
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 1. استخراج قیمت‌های کلیدی
-        # برای جلوگیری از خطا در صورت تغییر ساختار، از find استفاده می کنیم
+        # 1. استخراج قیمت‌های کلیدی با استفاده از دو ID متداول برای مقاومت
+        
+        # طلای 18 عیار (هر گرم)
         price_18k_element = soup.find('span', {'id': 'l-geram18'})
+        if not price_18k_element:
+            price_18k_element = soup.find('span', {'id': 'l-price_geram18'}) # ID جایگزین
         price_18k_text = price_18k_element.text if price_18k_element else None
         
+        # سکه امامی
         price_sekeh_element = soup.find('span', {'id': 'l-sekee'})
         price_sekeh_text = price_sekeh_element.text if price_sekeh_element else None
         
+        # دلار آمریکا (آزاد)
         price_usd_element = soup.find('span', {'id': 'l-price_dollar_rl'})
+        if not price_usd_element:
+            price_usd_element = soup.find('span', {'id': 'l-dollar'}) # ID جایگزین
         price_usd_text = price_usd_element.text if price_usd_element else None
         
+        # انس جهانی
         price_ounce_element = soup.find('span', {'id': 'l-ons'})
         price_ounce_text = price_ounce_element.text if price_ounce_element else None
         
@@ -109,12 +119,16 @@ def fetch_gold_data():
             # 🚨 انس جهانی به دلار است و نباید تبدیل شود
             "ounce_usd": clean_and_convert(price_ounce_text, is_float=True, is_rial_price=False), 
             
-            # برای مقایسه هفتگی/روزانه (فعلا Mock شده‌اند، نیاز به پیاده‌سازی تاریخچه است)
+            # Mock داده‌های گذشته (نیاز به پیاده‌سازی تاریخچه واقعی دارد)
             "yesterday_18k": clean_and_convert(price_18k_text, is_rial_price=True), 
             "week_ago_18k": clean_and_convert(price_18k_text, is_rial_price=True),
         }
         
         print(f"✅ Scraping successful: 18K Gold Price: {data['gold_18k_gram']} Toman")
+        
+        # اگر قیمت واکشی شده هنوز صفر است، لاگ هشدار قوی‌تری می‌دهیم
+        if data['gold_18k_gram'] == 0:
+             print("❌ FATAL SCRAPING ERROR: The extracted gold price is zero. The website structure may have fundamentally changed.")
         
         return data
         
@@ -129,23 +143,20 @@ def calculate_bubble(data):
     """محاسبه حباب طلای ۱۸ عیار بر اساس فرمول تئوریک."""
     if not data: return None
     gold_18k_now = data.get("gold_18k_gram", 0)
-    usd_rial_now = data.get("usd_rial", 0) # این قیمت دلار اکنون به تومان است
-    ounce_usd_now = data.get("ounce_usd", 0)
+    usd_toman_now = data.get("usd_rial", 0) # این قیمت دلار اکنون به تومان است
 
-    # 🚨 اصلاح فرمول: اگر usd_rial_now به تومان است، باید دوباره در 10 ضرب شود 
-    # تا به ریال برگردد یا مستقیماً از داده‌های سایت (بدون تقسیم بر 10) استفاده شود.
-    # اما چون ما قیمت نهایی تومان را نمایش می‌دهیم، در اینجا باید از نرخ ریالی استفاده شود
-    # برای جلوگیری از پیچیدگی، فرض می‌کنیم USD_RIAL_NOW قیمت دلار به ریال است که از سایت گرفته شده.
-    # برای استفاده در محاسبات تئوریک (که بر پایه ریال است) باید قیمت تومانی دلار * 10 شود
-    usd_rial_for_calc = usd_rial_now * 10 
+    # برای محاسبات تئوریک (که بر پایه ریال است) باید قیمت تومانی دلار * 10 شود
+    usd_rial_for_calc = usd_toman_now * 10 
+    ounce_usd_now = data.get("ounce_usd", 0)
     
-    if ounce_usd_now > 0 and usd_rial_for_calc > 0:
-        # قیمت تئوریک هر گرم طلای ۱۸ عیار
+    # 🚨 محافظت در برابر داده‌های صفر
+    if ounce_usd_now <= 0 or usd_rial_for_calc <= 0:
+        theoretical_gold_18k_toman = 0
+    else:
+        # قیمت تئوریک هر گرم طلای ۱۸ عیار (به ریال)
         theoretical_gold_18k_rial = (ounce_usd_now * usd_rial_for_calc * 0.75) / 31.1035 
         # تبدیل به تومان
         theoretical_gold_18k_toman = theoretical_gold_18k_rial // 10
-    else:
-        theoretical_gold_18k_toman = 0
         
     bubble_18k_amount = gold_18k_now - theoretical_gold_18k_toman
     if theoretical_gold_18k_toman > 0:
@@ -174,7 +185,6 @@ def format_comparison(now, past, name):
         indicator = "➖"
         trend = "بدون تغییر"
         
-    # 🚨 نمایش همه قیمت‌ها به تومان است
     return f"**{name}**: {now:,.0f} تومان {indicator} ({trend})"
 
 
@@ -238,7 +248,8 @@ def get_market_analysis(market_data):
 #           *** ۴. Handlers تلگرام ***
 # ----------------------------------------
 
-def main_menu():
+@bot.message_handler(commands=['start'])
+def start(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     buttons = [
@@ -249,12 +260,7 @@ def main_menu():
     
     keyboard.row(telegram_types.KeyboardButton(buttons[0]), telegram_types.KeyboardButton(buttons[1]))
     keyboard.row(telegram_types.KeyboardButton(buttons[2]))
-    return keyboard
-
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    keyboard = main_menu()
+    
     bot.send_message(message.chat.id, "سلام! به ربات تحلیلگر طلا و ارز خوش آمدید.\n"
                                      "از دکمه‌های زیر برای دریافت قیمت‌های لحظه‌ای و مشاوره بازار استفاده کنید.", parse_mode='Markdown', reply_markup=keyboard)
 
@@ -263,12 +269,13 @@ def start(message):
 def show_price(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد یا Scraping با خطا مواجه شده است.", reply_markup=main_menu())
+        # در صورت شکست، دکمه‌ها را دوباره نشان می‌دهیم
+        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد یا Scraping با خطا مواجه شده است.", reply_markup=start(message).reply_markup)
         return
 
     report = f"🟡 **قیمت‌های لحظه‌ای طلا و ارز** ({data['time']})\n\n"
     
-    # 🚨 نمایش قیمت‌ها به تومان
+    # 🚨 نمایش همه قیمت‌های داخلی به تومان است
     report += f"**🥇 طلای ۱۸ عیار (هر گرم):** {data['gold_18k_gram']:,.0f} تومان\n"
     report += f"**👑 سکه امامی (طرح جدید):** {data['sekeh_emami']:,.0f} تومان\n"
     report += f"**💵 دلار آمریکا (آزاد):** {data['usd_rial']:,.0f} تومان\n"
@@ -278,14 +285,14 @@ def show_price(message):
     report += format_comparison(data['gold_18k_gram'], data['yesterday_18k'], "مقایسه با دیروز") + "\n"
     report += format_comparison(data['gold_18k_gram'], data['week_ago_18k'], "مقایسه با هفته قبل") + "\n"
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=main_menu())
+    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
 
 
 @bot.message_handler(commands=['bubble'])
 def show_bubble(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد.", reply_markup=main_menu())
+        bot.send_message(message.chat.id, "❌ در حال حاضر امکان واکشی اطلاعات قیمت وجود ندارد.", reply_markup=start(message).reply_markup)
         return
         
     bubble_data = calculate_bubble(data)
@@ -295,21 +302,20 @@ def show_bubble(message):
     
     status = "مثبت 🟢 (بیش از ارزش ذاتی)" if bubble_percent >= 0 else "منفی 🔴 (کمتر از ارزش ذاتی)"
     
-    # 🚨 نمایش قیمت‌ها به تومان
     report += f"**🥇 قیمت لحظه‌ای (گرم ۱۸):** {bubble_data['gold_18k_price']:,.0f} تومان\n"
     report += f"**📉 قیمت تئوریک (ارزش ذاتی):** {bubble_data['theoretical_18k_price']:,.0f} تومان\n"
     report += f"**🔥 وضعیت حباب:** **{status}**\n"
     report += f"**⚖️ میزان حباب:** **{abs(bubble_percent):.2f}%**\n\n"
     report += "ℹ️ حباب مثبت نشان‌دهنده تقاضای بیشتر از عرضه داخلی است."
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=main_menu())
+    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
 
 
 @bot.message_handler(commands=['advice'])
 def get_advice(message):
     data = fetch_gold_data()
     if not data or data['gold_18k_gram'] == 0:
-        bot.send_message(message.chat.id, "❌ امکان واکشی داده‌های بازار برای تحلیل وجود ندارد.", reply_markup=main_menu())
+        bot.send_message(message.chat.id, "❌ امکان واکشی داده‌های بازار برای تحلیل وجود ندارد.", reply_markup=start(message).reply_markup)
         return
 
     # 1. داده‌ها را برای Agent آماده می‌کنیم (شامل حباب)
@@ -323,7 +329,7 @@ def get_advice(message):
     error_msg, analysis = get_market_analysis(full_market_data)
     
     if error_msg:
-        bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
+        bot.send_message(message.chat.id, error_msg, reply_markup=start(message).reply_markup)
         return
 
     # 3. نمایش نتیجه تحلیل
@@ -344,7 +350,7 @@ def get_advice(message):
     advice_report += f"**دلیل تحلیل:** {analysis['reason']}\n\n"
     advice_report += "⚠️ این تحلیل بر اساس داده‌های لحظه‌ای و مدل AI است و مسئولیت تصمیم نهایی با شماست."
 
-    bot.send_message(message.chat.id, advice_report, parse_mode='Markdown', reply_markup=main_menu())
+    bot.send_message(message.chat.id, advice_report, parse_mode='Markdown', reply_markup=start(message).reply_markup)
 
 # ----------------------------------------
 #           *** ۵. اجرای ربات در لیارا (Webhook) ***
