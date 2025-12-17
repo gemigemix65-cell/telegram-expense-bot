@@ -1,9 +1,6 @@
-pytelegrambotapi
-Flask
+pyTelegramBotAPI
+flask
 requests
 beautifulsoup4
-google-generativeai
-pydantic
-matplotlib
 jdatetime
-
+google-genai
