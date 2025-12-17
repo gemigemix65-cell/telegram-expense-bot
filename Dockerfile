@@ -3,26 +3,22 @@ FROM python:3.11-slim
 # تنظیم دایرکتوری کاری
 WORKDIR /app
 
-# نصب بسته‌های پایتون
-COPY requirements.txt .
+# نصب ابزارهای لازم برای کامپایل برخی پکیج‌ها
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    # برای matplotlib و جدیتیتایم
-    libpng-dev \
-    libfreetype6-dev \
-    pkg-config \
-    # برای جدیتیتایم (اگرچه python-is-python3 کفایت می‌کند)
-    python3-dev \
-    # پاکسازی
     && rm -rf /var/lib/apt/lists/*
-    
+
+# کپی کردن فایل نیازمندی‌ها
+COPY requirements.txt .
+
+# نصب پکیج‌ها با اطمینان از عدم استفاده از کش قدیمی
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# کپی کردن کدهای برنامه
+# کپی کردن بقیه کدها
 COPY . .
 
-# تنظیم پورت و اجرای بدون بافر پایتون
+# تنظیم پورت لیارا
 ENV PORT=3000
 ENV PYTHONUNBUFFERED=1
 
