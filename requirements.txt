@@ -2,7 +2,8 @@ pytelegrambotapi
 Flask
 requests
 beautifulsoup4
-google-genai
+google-generativeai
 pydantic
 matplotlib
 jdatetime
+
