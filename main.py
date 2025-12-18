@@ -9,7 +9,7 @@ import jdatetime
 import time
 import re
 
-# 🚀 استفاده از پکیج جدید گوگل
+# استفاده از پکیج جدید گوگل
 from google import genai
 from google.genai import types
 
@@ -32,75 +32,98 @@ CACHE = {
     }
 }
 
-# --- تنظیمات هوش مصنوعی با قابلیت پروکسی برای دور زدن تحریم ---
+# --- تنظیمات هوش مصنوعی (بهینه شده برای سرور خارج) ---
 client = None
 if GEMINI_API_KEY:
     try:
-        # تنظیم پروکسی برای عبور از سد گوگل (استفاده از سرویس‌های رایگان یا تونل)
-        # اگر پروکسی اختصاصی ندارید، معمولاً از طریق تنظیمات محیطی HTTP_PROXY در لیارا هم قابل حل است
-        client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options={'api_version': 'v1beta'}
-        )
-        print("✅ سیستم هوش مصنوعی آماده نبرد با تحریم!")
+        # استفاده از تنظیمات پیش‌فرض برای سرور آلمان
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        print("✅ اتصال هوش مصنوعی در سرور آلمان برقرار شد.")
     except Exception as e:
-        print(f"❌ خطا در استارت: {e}")
+        print(f"❌ خطا در پیکربندی: {e}")
 
 # ----------------------------------------
-#           *** ۲. استخراج داده ***
+#           *** ۲. استخراج داده (متد جدید و مقاوم) ***
 # ----------------------------------------
 
 def clean_val(text):
     if not text: return 0
-    text = text.replace(',', '')
+    # حذف تمام کاراکترهای غیر عددی بجای جایگزینی تک‌تک
+    clean = "".join(re.findall(r'\d+', text.replace(',', '')))
+    # تبدیل اعداد فارسی/عربی به انگلیسی
     p_nums = "۰۱۲۳۴۵۶۷۸۹"; e_nums = "0123456789"
     table = str.maketrans(p_nums, e_nums)
-    clean = text.translate(table)
-    clean = "".join(filter(str.isdigit, clean))
+    clean = clean.translate(table)
     return int(clean) if clean else 0
 
-def fetch_data():
+def fetch_market_data():
+    """استخراج قیمت با چندین متد برای جلوگیری از Scraping Error"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    d = {"gold_18k_gram": 0, "sekeh_emami": 0, "usd_rial": 0, "ounce_usd": 0.0}
+    
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-        # تلاش برای دریافت از TGJU
+        # منبع ۱: TGJU (تلاش با انتخابگرهای دقیق‌تر)
         res = requests.get("https://www.tgju.org/", headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        d = {"gold_18k_gram": 0, "sekeh_emami": 0, "usd_rial": 0, "ounce_usd": 0.0}
-        mapping = {"geram18": "gold_18k_gram", "sekeh": "sekeh_emami", 
-                   "price_dollar_rl": "usd_rial", "ons": "ounce_usd"}
+        targets = {
+            "geram18": "gold_18k_gram",
+            "sekeh": "sekeh_emami",
+            "price_dollar_rl": "usd_rial",
+            "ons": "ounce_usd"
+        }
         
-        for key, field in mapping.items():
-            row = soup.select_one(f'tr[data-market-row="{key}"]')
+        for row_id, field in targets.items():
+            row = soup.find('tr', {'data-market-row': row_id})
             if row:
-                val = row.select_one('.info-price').text
-                if field == "ounce_usd":
-                    d[field] = float(val.replace(',', ''))
-                else:
-                    d[field] = clean_val(val)
-        
-        if d['gold_18k_gram'] > 0:
-            d['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
-            d['source'] = "TGJU"
-            CACHE['data'] = d
-            return d
+                price_cell = row.find('td', {'class': 'info-price'}) or row.find('td', {'class': 'info-last'})
+                if price_cell:
+                    val = price_cell.get_text(strip=True)
+                    if field == "ounce_usd":
+                        try: d[field] = float(val.replace(',', ''))
+                        except: pass
+                    else:
+                        d[field] = clean_val(val)
     except Exception as e:
-        print(f"Scraping Error: {e}")
+        print(f"TGJU Fetch Error: {e}")
+
+    # منبع کمکی اگر منبع اول ناقص بود
+    if d['gold_18k_gram'] == 0:
+        try:
+            res_backup = requests.get("https://www.tala.ir/price/gold", headers=headers, timeout=10)
+            soup_b = BeautifulSoup(res_backup.text, 'html.parser')
+            text = soup_b.get_text()
+            # استفاده از Regex برای استخراج از متن
+            gold_price = re.search(r'۱۸ عیار.*?([\d,]{7,15})', text)
+            if gold_price: d['gold_18k_gram'] = clean_val(gold_price.group(1))
+            
+            usd_price = re.search(r'دلار آزاد.*?([\d,]{5,10})', text)
+            if usd_price: d['usd_rial'] = clean_val(usd_price.group(1))
+        except: pass
+
+    if d['gold_18k_gram'] > 0:
+        d['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
+        d['source'] = "Live Market"
+        CACHE['data'].update(d)
+        return d
+    
     return CACHE['data']
 
 # ----------------------------------------
-#           *** ۳. تحلیل هوشمند (نسخه اصلاح شده) ***
+#           *** ۳. تحلیل هوشمند ***
 # ----------------------------------------
 
 def get_ai_analysis(m_data):
-    if not client: return "❌ تنظیمات هوش مصنوعی یافت نشد.", None
+    if not client: return "❌ هوش مصنوعی غیرفعال است.", None
     
-    prompt = (f"تحلیلگر بازار طلا: طلا ۱۸ عیار {m_data['gold_18k_gram']} تومان، "
+    prompt = (f"تحلیلگر بازار ایران: طلا {m_data['gold_18k_gram']} تومان، "
               f"دلار {m_data['usd_rial']} تومان. "
-              "وضعیت را بررسی کن و کوتاه و فقط در قالب JSON فارسی با کلیدهای summary و advice و reason پاسخ بده.")
+              "یک تحلیل کوتاه فارسی در قالب JSON (summary, advice, reason) بده.")
     
     try:
-        # استفاده از مدل flash برای کاهش حجم ترافیک و سرعت بیشتر
         response = client.models.generate_content(
             model='gemini-1.5-flash',
             contents=prompt,
@@ -109,10 +132,10 @@ def get_ai_analysis(m_data):
         return None, json.loads(response.text)
     except Exception as e:
         print(f"AI ERROR: {e}")
-        # پیغام راهنما برای کاربر
+        # اگر در آلمان هم 403 داد، یعنی آی‌پی دیتاسنتر توسط گوگل بلاک شده
         if "403" in str(e):
-            return "⚠️ متأسفانه گوگل دسترسی سرورهای ایران را مسدود کرده است. در حال تلاش برای جایگزینی منبع تحلیل هستیم.", None
-        return "⚠️ خطای ارتباط با هوش مصنوعی.", None
+            return "⚠️ گوگل دسترسی دیتاسنترهای آلمان را محدود کرده است. لطفاً از مدل‌های جایگزین استفاده کنید.", None
+        return f"⚠️ خطای تحلیل: {str(e)[:50]}", None
 
 # ----------------------------------------
 #           *** ۴. هندلرهای تلگرام ***
@@ -126,41 +149,46 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🏅 ربات هوشمند طلا خوش آمدید.\nآخرین نسخه ضدتحریم فعال شد.", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "🥇 ربات هوشمند قیمت طلا (نسخه سرور آلمان)\nآماده خدمت‌رسانی هستم.", reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
-def price_msg(message):
-    d = fetch_data()
+def handle_price(message):
+    d = fetch_market_data()
     if d['gold_18k_gram'] == 0:
-        bot.reply_to(message, "❌ خطا در واکشی داده. لطفاً دوباره تلاش کنید.")
+        bot.reply_to(message, "⚠️ خطا در دریافت قیمت. دقایقی دیگر تلاش کنید.")
         return
-    msg = (f"💰 **قیمت‌های لحظه‌ای**\n\n"
+    
+    msg = (f"💰 **قیمت‌های لحظه‌ای بازار**\n\n"
            f"🥇 طلا ۱۸ عیار: {d['gold_18k_gram']:,.0f} تومان\n"
            f"💵 دلار آزاد: {d['usd_rial']:,.0f} تومان\n"
            f"👑 سکه امامی: {d['sekeh_emami']:,.0f} تومان\n"
-           f"🌐 انس جهانی: {d['ounce_usd']:,.2f} دلار")
+           f"🌐 انس جهانی: {d['ounce_usd']:,.2f} دلار\n\n"
+           f"⏰ بروزرسانی: {d['time']}")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
-def bubble_msg(message):
-    d = fetch_data()
+def handle_bubble(message):
+    d = fetch_market_data()
     try:
         theo = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
         percent = ((d['gold_18k_gram'] - theo) / theo) * 100
-        emoji = "🟢" if percent > 0 else "🔴"
-        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n📊 حباب: {percent:.2f}% {emoji}", parse_mode='Markdown')
+        status = "🔴 حباب مثبت (گران)" if percent > 0 else "🟢 حباب منفی (ارزان)"
+        msg = (f"⚪️ **تحلیل حباب طلا**\n\n"
+               f"📊 درصد حباب: {percent:.2f}%\n"
+               f"🔍 وضعیت: {status}")
+        bot.send_message(message.chat.id, msg, parse_mode='Markdown')
     except:
-        bot.reply_to(message, "❌ خطا در محاسبه حباب.")
+        bot.reply_to(message, "❌ محاسبه حباب امکان‌پذیر نیست.")
 
 @bot.message_handler(func=lambda m: m.text == "🧠 مشاوره بازار")
-def advice_msg(message):
-    bot.send_message(message.chat.id, "🤖 در حال تحلیل هوشمند بازار...")
-    d = fetch_data()
+def handle_advice(message):
+    bot.send_message(message.chat.id, "🤖 در حال تحلیل هوشمند داده‌های بازار...")
+    d = fetch_market_data()
     err, analysis = get_ai_analysis(d)
     if err:
         bot.send_message(message.chat.id, err)
     else:
-        msg = f"✨ **تحلیل AI**\n\n💡 **پیشنهاد:** {analysis.get('advice')}\n\n🧐 **علت:** {analysis.get('reason')}"
+        msg = f"✨ **تحلیل اختصاصی AI**\n\n📝 {analysis.get('summary')}\n\n💡 **پیشنهاد:** {analysis.get('advice')}\n\n🧐 **علت:** {analysis.get('reason')}"
         bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 # ----------------------------------------
@@ -169,8 +197,11 @@ def advice_msg(message):
 
 @server.route(f"/{TOKEN}", methods=['POST'])
 def webhook():
-    bot.process_new_updates([telegram_types.Update.de_json(request.get_data().decode('utf-8'))])
-    return "OK", 200
+    if request.headers.get('content-type') == 'application/json':
+        update = telegram_types.Update.de_json(request.get_data().decode('utf-8'))
+        bot.process_new_updates([update])
+        return "OK", 200
+    return "Error", 400
 
 if __name__ == "__main__":
     bot.remove_webhook()
