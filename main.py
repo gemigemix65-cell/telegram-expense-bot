@@ -4,18 +4,17 @@ from flask import Flask, request
 import os
 import requests
 import json
-from bs4 import BeautifulSoup
 import jdatetime 
 import time
 import re
-from openai import OpenAI # DeepSeek از کتابخانه OpenAI استفاده می‌کند
+from groq import Groq # هوش مصنوعی رایگان و سریع
 
 # ----------------------------------------
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
 TOKEN = os.environ.get("BOT_TOKEN")
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY") 
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
 
@@ -29,73 +28,68 @@ CACHE = {
     }
 }
 
-# --- تنظیمات هوش مصنوعی DeepSeek ---
+# --- تنظیمات هوش مصنوعی Groq (رایگان) ---
 ai_client = None
-if DEEPSEEK_API_KEY:
+if GROQ_API_KEY:
     try:
-        ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-        print("✅ هوش مصنوعی DeepSeek فعال شد.")
+        ai_client = Groq(api_key=GROQ_API_KEY)
+        print("✅ هوش مصنوعی رایگان Groq فعال شد.")
     except Exception as e:
-        print(f"❌ خطا در اتصال به DeepSeek: {e}")
+        print(f"❌ خطا در Groq: {e}")
 
 # ----------------------------------------
-#           *** ۲. استخراج داده (متد کاملاً جدید) ***
+#           *** ۲. دریافت قیمت (متد ضد خطا) ***
 # ----------------------------------------
 
 def fetch_market_data():
-    """استخراج مستقیم و ساده برای جلوگیری از خطای NoneType"""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0'}
-    d = {"gold_18k_gram": 0, "sekeh_emami": 0, "usd_rial": 0, "ounce_usd": 0.0}
-    
+    """استخراج قیمت با استفاده از متد API داخلی TGJU (بسیار پایدار)"""
+    global CACHE
     try:
-        # استفاده از سایت Nobitex یا منابع مشابه برای نرخ تتر/دلار اگر TGJU بسته بود
-        # اما فعلاً تلاش مجدد روی ساختار متنی TGJU
-        res = requests.get("https://www.tgju.org/", headers=headers, timeout=10)
-        content = res.text
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        # فراخوانی API مستقیم سایت بجای اسکرپ کردن ظاهر سایت
+        res = requests.get("https://api.tgju.org/v1/market/indicator/summary-table-data/live", headers=headers, timeout=10)
         
-        # استخراج با Regex (بسیار مقاوم‌تر از BeautifulSoup در برابر تغییر ساختار)
-        gold = re.search(r'data-market-row="geram18".*?class="info-price">(.*?)<', content, re.DOTALL)
-        usd = re.search(r'data-market-row="price_dollar_rl".*?class="info-price">(.*?)<', content, re.DOTALL)
-        sekeh = re.search(r'data-market-row="sekeh".*?class="info-price">(.*?)<', content, re.DOTALL)
-        ons = re.search(r'data-market-row="ons".*?class="info-price">(.*?)<', content, re.DOTALL)
-
-        if gold: d['gold_18k_gram'] = int(re.sub(r'\D', '', gold.group(1)))
-        if usd: d['usd_rial'] = int(re.sub(r'\D', '', usd.group(1)))
-        if sekeh: d['sekeh_emami'] = int(re.sub(r'\D', '', sekeh.group(1)))
-        if ons: d['ounce_usd'] = float(ons.group(1).replace(',', ''))
-        
-        if d['gold_18k_gram'] > 0:
-            d['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
-            CACHE['data'].update(d)
-            return d
+        if res.status_code == 200:
+            raw_data = res.json().get('data', [])
+            for item in raw_data:
+                key = item[0] # نام نماد
+                val = str(item[1]).replace(',', '') # قیمت
+                
+                if key == "geram18": CACHE['data']['gold_18k_gram'] = int(val)
+                elif key == "price_dollar_rl": CACHE['data']['usd_rial'] = int(val)
+                elif key == "sekeh": CACHE['data']['sekeh_emami'] = int(val)
+                elif key == "ons": CACHE['data']['ounce_usd'] = float(val)
+            
+            CACHE['data']['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
+            return CACHE['data']
     except Exception as e:
-        print(f"Fetch Error: {e}")
-    
+        print(f"Price Fetch Error: {e}")
     return CACHE['data']
 
 # ----------------------------------------
-#           *** ۳. تحلیل هوشمند با DeepSeek ***
+#           *** ۳. تحلیل با هوش مصنوعی رایگان ***
 # ----------------------------------------
 
 def get_ai_analysis(m_data):
-    if not ai_client: return "❌ کلید DeepSeek ست نشده است.", None
+    if not ai_client: return "❌ کلید Groq تنظیم نشده است.", None
     
-    prompt = (f"تحلیلگر بازار ایران هستی. قیمت طلا {m_data['gold_18k_gram']} و دلار {m_data['usd_rial']}. "
-              "یک تحلیل کوتاه فارسی به صورت JSON با کلیدهای summary, advice, reason بده.")
+    prompt = (f"تحلیلگر طلا: طلا ۱۸ عیار {m_data['gold_18k_gram']} تومان، "
+              f"دلار {m_data['usd_rial']} تومان. "
+              "وضعیت بازار را تحلیل کن و پاسخ را فقط در قالب JSON فارسی با کلیدهای summary و advice بده.")
     
     try:
-        response = ai_client.chat.completions.create(
-            model="deepseek-chat",
+        chat_completion = ai_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": "You are a market analyst. Always respond in Persian JSON format."},
+                {"role": "user", "content": prompt}
             ],
-            response_format={'type': 'json_object'}
+            model="llama-3.3-70b-versatile", # یکی از بهترین مدل‌های رایگان Groq
+            response_format={"type": "json_object"}
         )
-        return None, json.loads(response.choices[0].message.content)
+        return None, json.loads(chat_completion.choices[0].message.content)
     except Exception as e:
-        print(f"DeepSeek Error: {e}")
-        return f"⚠️ خطای هوش مصنوعی: {str(e)[:50]}", None
+        print(f"Groq AI Error: {e}")
+        return "⚠️ هوش مصنوعی موقتاً پاسخگو نیست.", None
 
 # ----------------------------------------
 #           *** ۴. هندلرهای تلگرام ***
@@ -109,30 +103,46 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🏅 ربات هوشمند با موتور DeepSeek فعال شد.", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "🥇 ربات هوشمند طلا با موتور Groq فعال شد.\n(کاملاً رایگان و پرسرعت)", reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
     d = fetch_market_data()
     if d['gold_18k_gram'] == 0:
-        bot.reply_to(message, "⚠️ منبع قیمت موقتاً در دسترس نیست.")
+        bot.reply_to(message, "⚠️ سرویس دریافت قیمت موقتاً قطع است.")
         return
     msg = (f"💰 **قیمت لحظه‌ای**\n\n"
            f"🥇 طلا ۱۸ عیار: {d['gold_18k_gram']:,.0f}\n"
            f"💵 دلار آزاد: {d['usd_rial']:,.0f}\n"
            f"👑 سکه امامی: {d['sekeh_emami']:,.0f}\n"
-           f"🌐 انس جهانی: {d['ounce_usd']:,.2f}")
+           f"🌐 انس جهانی: {d['ounce_usd']:,.2f}\n\n"
+           f"⏰ بروزرسانی: {d['time']}")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+
+@bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
+def handle_bubble(message):
+    d = fetch_market_data()
+    try:
+        theo = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
+        percent = ((d['gold_18k_gram'] - theo) / theo) * 100
+        status = "🔴 گران‌فروشی" if percent > 0 else "🟢 ارزانی"
+        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب**\n\n📊 حباب: {percent:.2f}%\n🔍 وضعیت: {status}", parse_mode='Markdown')
+    except:
+        bot.reply_to(message, "❌ خطا در محاسبه.")
 
 @bot.message_handler(func=lambda m: m.text == "🧠 مشاوره بازار")
 def handle_advice(message):
-    bot.send_message(message.chat.id, "🤖 در حال استعلام از DeepSeek...")
+    bot.send_message(message.chat.id, "🤖 در حال تحلیل با Llama 3...")
     d = fetch_market_data()
     err, analysis = get_ai_analysis(d)
     if err: bot.send_message(message.chat.id, err)
     else:
-        msg = f"✨ **تحلیل هوش مصنوعی**\n\n📝 {analysis.get('summary')}\n\n💡 **پیشنهاد:** {analysis.get('advice')}"
+        msg = f"✨ **تحلیل AI (رایگان)**\n\n📝 {analysis.get('summary')}\n\n💡 **پیشنهاد:** {analysis.get('advice')}"
         bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+
+# ----------------------------------------
+#           *** ۵. وب‌هوک و اجرا ***
+# ----------------------------------------
 
 @server.route(f"/{TOKEN}", methods=['POST'])
 def webhook():
