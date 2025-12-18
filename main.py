@@ -6,20 +6,21 @@ import requests
 import json
 import jdatetime 
 import time
-import re
 
 # ----------------------------------------
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
 TOKEN = os.environ.get("BOT_TOKEN")
+# استفاده از توکن شما
+BRS_TOKEN = "BiEKVyewj956z3tnPMKtbSjUh2JLziPf" 
+
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
 
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
 
-# حافظه کش برای قیمت‌ها
 CACHE = {
     "data": {
         "gold_18k_gram": 0, "sekeh_emami": 0, "usd_rial": 0, 
@@ -28,53 +29,55 @@ CACHE = {
 }
 
 # ----------------------------------------
-#           *** ۲. دریافت داده (نسخه ضد تحریم دیتاسنتر) ***
+#           *** ۲. دریافت داده (طبق آموزش BrsApi) ***
 # ----------------------------------------
 
 def fetch_market_data():
     global CACHE
-    # استفاده از منبع داده منعطف که با سرورهای خارج از ایران مشکلی ندارد
-    # این آدرس یک Gateway پایدار برای دریافت نرخ‌های ایران است
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        
-        # تلاش اول: استفاده از منبع دیتای زنده TGJU (با متد شبیه‌سازی مرورگر)
-        url = f"https://api.tgju.org/v1/market/indicator/summary-table-data/live?_={int(time.time())}"
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            raw_data = response.json().get('data', [])
-            for item in raw_data:
-                key = item[0]
-                val = str(item[1]).replace(',', '')
-                if key == "geram18": CACHE['data']['gold_18k_gram'] = int(val)
-                elif key == "price_dollar_rl": CACHE['data']['usd_rial'] = int(val)
-                elif key == "sekeh": CACHE['data']['sekeh_emami'] = int(val)
-                elif key == "ons": CACHE['data']['ounce_usd'] = float(val)
+    # آدرس استاندارد طبق مستندات سایت
+    url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
+    
+    # تنظیم هدرها برای جلوگیری از Connection Reset (طبق آموزش سایت)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://brsapi.ir/',
+        'Connection': 'keep-alive'
+    }
 
-            CACHE['data']['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
-            return CACHE['data']
-            
-    except Exception as e:
-        print(f"Primary Source Failed: {e}")
-        
-    # تلاش دوم: اگر منبع اول بلاک بود، از یک اسکرپر متن‌محور مقاوم استفاده کن
     try:
-        res_backup = requests.get("https://www.tala.ir/price", headers=headers, timeout=10)
-        content = res_backup.text
-        gold = re.search(r'طلا ۱۸ عیار.*?<span class="price">([\d,]+)', content)
-        usd = re.search(r'دلار.*?<span class="price">([\d,]+)', content)
-        ons = re.search(r'انس طلا.*?<span class="price">([\d,.]+)', content)
-        
-        if gold: CACHE['data']['gold_18k_gram'] = int(gold.group(1).replace(',', ''))
-        if usd: CACHE['data']['usd_rial'] = int(usd.group(1).replace(',', ''))
-        if ons: CACHE['data']['ounce_usd'] = float(ons.group(1).replace(',', ''))
-        
-        CACHE['data']['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
+        # استفاده از سشن برای پایداری بیشتر
+        with requests.Session() as session:
+            response = session.get(url, headers=headers, timeout=20)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # استخراج و تبدیل ریال به تومان
+                if 'gold' in data:
+                    for item in data['gold']:
+                        name = item.get('name', '')
+                        p_toman = int(item.get('price', 0)) / 10
+                        
+                        if "18 عیار" in name:
+                            CACHE['data']['gold_18k_gram'] = p_toman
+                        elif "سکه امامی" in name:
+                            CACHE['data']['sekeh_emami'] = p_toman
+                        elif "انس طلا" in name:
+                            CACHE['data']['ounce_usd'] = float(item.get('price', 0))
+
+                if 'currency' in data:
+                    for item in data['currency']:
+                        if item.get('name') == 'دلار':
+                            CACHE['data']['usd_rial'] = int(item.get('price', 0)) / 10
+
+                CACHE['data']['time'] = jdatetime.datetime.now().strftime("%H:%M:%S")
+                return CACHE['data']
+            else:
+                print(f"BrsApi HTTP Error: {response.status_code}")
+                
     except Exception as e:
-        print(f"Backup Source Failed: {e}")
+        print(f"❌ خطای نهایی BrsApi: {e}")
     
     return CACHE['data']
 
@@ -84,21 +87,21 @@ def fetch_market_data():
 
 def get_logic_analysis(d):
     if d['gold_18k_gram'] < 1000:
-        return "⚠️ فعلاً امکان دریافت قیمت از سرور وجود ندارد.", "احتمالاً محدودیت موقت آی‌پی رخ داده است."
+        return "⚠️ خطا در دریافت اطلاعات.", "لطفاً لحظاتی دیگر تلاش کنید."
 
-    # فرمول ارزش ذاتی طلا ۱۸ عیار
+    # فرمول محاسبه حباب
     intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
     bubble = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
     
     if bubble > 2.5:
-        summary = f"بازار دارای حباب مثبت ({bubble:.1f}%) است."
-        advice = "❌ خرید در این قیمت‌ها ریسک بالایی دارد."
+        summary = f"حباب مثبت ({bubble:.1f}%). طلا گران‌تر از ارزش جهانی است."
+        advice = "❌ ریسک خرید بالا."
     elif -1 <= bubble <= 2.5:
-        summary = "بازار در وضعیت تعادلی و منطقی قرار دارد."
-        advice = "⚖️ زمان مناسب برای خرید پله‌ای."
+        summary = "بازار در تعادل است."
+        advice = "⚖️ مناسب برای خرید پله‌ای."
     else:
-        summary = f"بازار دارای حباب منفی ({bubble:.1f}%) است."
-        advice = "✅ قیمت داخلی زیر ارزش جهانی است. فرصت خرید!"
+        summary = f"حباب منفی ({bubble:.1f}%). طلا ارزان‌تر از ارزش جهانی است."
+        advice = "✅ فرصت خرید مناسب."
         
     return summary, advice
 
@@ -114,13 +117,13 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🏅 ربات هوشمند طلا (نسخه ضدبلاک لیارا) فعال شد.", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "🥇 ربات هوشمند طلا (نسخه بهینه BrsApi) فعال شد.", reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
     d = fetch_market_data()
     if d['gold_18k_gram'] == 0:
-        bot.reply_to(message, "⚠️ منبع قیمت موقتاً در دسترس نیست. ۵ دقیقه دیگر دوباره تلاش کنید.")
+        bot.reply_to(message, "⚠️ خطای ارتباط با منبع داده. لطفاً دوباره دکمه را بزنید.")
         return
     
     msg = (f"💰 **قیمت‌های لحظه‌ای بازار**\n\n"
@@ -140,11 +143,11 @@ def handle_bubble(message):
         emoji = "🔴" if percent > 0 else "🟢"
         bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب**\n\n📊 میزان حباب: `{percent:.2f}%` {emoji}", parse_mode='Markdown')
     except:
-        bot.reply_to(message, "❌ دیتا ناقص است.")
+        bot.reply_to(message, "❌ خطا در محاسبه داده‌ها.")
 
 @bot.message_handler(func=lambda m: m.text == "🧠 مشاوره بازار")
 def handle_advice(message):
-    bot.send_message(message.chat.id, "🤖 در حال تحلیل داده‌های بازار...")
+    bot.send_message(message.chat.id, "🤖 در حال واکشی اطلاعات از BrsApi...")
     d = fetch_market_data()
     summary, advice = get_logic_analysis(d)
     msg = f"✨ **تحلیل کارشناسی**\n\n📝 {summary}\n\n💡 **پیشنهاد:** {advice}"
