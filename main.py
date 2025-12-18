@@ -29,16 +29,16 @@ CACHE = {
 }
 
 # ----------------------------------------
-#           *** ۲. دریافت داده از BrsApi ***
+#           *** ۲. دریافت داده (بر اساس جدول نمادهای سایت) ***
 # ----------------------------------------
 
 def fetch_market_data():
     global CACHE
+    # آدرس API رایگان طبق مستندات صفحه وب ارسالی
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
     }
 
     try:
@@ -46,29 +46,28 @@ def fetch_market_data():
         if response.status_code == 200:
             data = response.json()
             
-            # استخراج طلا و سکه (واحد در API ریال است -> تبدیل به تومان)
+            # ۱. استخراج طلا و سکه از بخش 'gold' بر اساس symbol
             if 'gold' in data:
                 for item in data['gold']:
-                    name = item.get('name', '')
+                    sym = item.get('symbol', '')
                     price = int(item.get('price', 0))
                     
-                    if "18 عیار" in name:
+                    if sym == "IR_18K_GOLD": # طلای 18 عیار
                         CACHE['data']['gold_18k_gram'] = price / 10
-                    elif "سکه امامی" in name:
+                    elif sym == "IR_COIN_EMAMI": # سکه امامی
                         CACHE['data']['sekeh_emami'] = price / 10
-                    elif "انس طلا" in name:
-                        # اونس جهانی همیشه به دلار است و نیاز به تقسیم بر ۱۰ ندارد
+                    elif sym == "XAU_USD": # انس طلا (قیمت جهانی به دلار)
                         CACHE['data']['ounce_usd'] = float(item.get('price', 0))
 
-            # استخراج دلار
+            # ۲. استخراج دلار از بخش 'currency' بر اساس symbol
             if 'currency' in data:
                 for item in data['currency']:
-                    if item.get('name') == 'دلار':
+                    if item.get('symbol') == "USD": # دلار آمریکا
                         CACHE['data']['usd_rial'] = int(item.get('price', 0)) / 10
 
             # تنظیم تاریخ شمسی و ساعت
             now = jdatetime.datetime.now()
-            CACHE['data']['last_update'] = now.strftime("%Y/%m/%d - %H:%M:%S")
+            CACHE['data']['last_update'] = now.strftime("%Y/%m/%d ساعت %H:%M")
             return CACHE['data']
             
     except Exception as e:
@@ -82,21 +81,22 @@ def fetch_market_data():
 
 def get_logic_analysis(d):
     if d['gold_18k_gram'] < 1000:
-        return "⚠️ داده‌ای دریافت نشد.", "لطفاً مجدد تلاش کنید."
+        return "⚠️ داده‌های بازار هنوز کامل دریافت نشده است.", "لطفاً دقایقی دیگر دوباره تلاش کنید."
 
     # فرمول ارزش ذاتی طلا ۱۸ عیار
+    # (انس * قیمت دلار به ریال * ۰.۷۵) / ۳۱.۱۰۳۵ / ۱۰ (برای تومان)
     intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
     bubble = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
     
     if bubble > 2.5:
-        summary = f"حباب مثبت ({bubble:.1f}%). بازار داخلی گران‌تر از ارزش واقعی است."
-        advice = "❌ ریسک خرید بالا در این لحظه."
+        summary = f"حباب مثبت طلا: `{bubble:.1f}%`"
+        advice = "❌ در حال حاضر قیمت داخلی حباب دارد. خرید در این سطح پرریسک است."
     elif -1 <= bubble <= 2.5:
-        summary = "بازار در وضعیت تعادلی است."
-        advice = "⚖️ قیمت‌ها منطقی و مناسب خرید پله‌ای."
+        summary = "بازار در وضعیت تعادل (بدون حباب)"
+        advice = "⚖️ قیمت‌ها با انس جهانی هماهنگ است. مناسب برای پس‌انداز."
     else:
-        summary = f"حباب منفی ({bubble:.1f}%). طلا زیر قیمت جهانی معامله می‌شود."
-        advice = "✅ فرصت خرید عالی!"
+        summary = f"حباب منفی طلا: `{bubble:.1f}%`"
+        advice = "✅ قیمت داخلی ارزان‌تر از ارزش جهانی است. فرصت خرید عالی!"
         
     return summary, advice
 
@@ -112,17 +112,22 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🏅 به ربات تحلیلگر خوش آمدید.\nداده‌ها مستقیماً از BrsApi دریافت می‌شوند.", reply_markup=main_menu())
+    bot.send_message(
+        message.chat.id, 
+        "🏅 **تحلیلگر هوشمند بازار طلا و ارز**\nداده‌ها با دقت نمادهای سیستمی BrsApi تنظیم شدند.", 
+        reply_markup=main_menu(),
+        parse_mode='Markdown'
+    )
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
     d = fetch_market_data()
     if d['gold_18k_gram'] == 0:
-        bot.reply_to(message, "⚠️ خطا در دریافت اطلاعات. لطفاً دوباره امتحان کنید.")
+        bot.reply_to(message, "⚠️ خطای سیستمی در دریافت قیمت. لطفاً لحظاتی دیگر مجدد تلاش کنید.")
         return
     
-    msg = (f"💰 **قیمت‌های لحظه‌ای بازار**\n"
-           f"📅 تاریخ: `{d['last_update']}`\n\n"
+    msg = (f"💰 **آخرین وضعیت بازار**\n"
+           f"📅 بروزرسانی: `{d['last_update']}`\n\n"
            f"🥇 طلا ۱۸ عیار: `{d['gold_18k_gram']:,.0f}` تومان\n"
            f"💵 دلار آزاد: `{d['usd_rial']:,.0f}` تومان\n"
            f"👑 سکه امامی: `{d['sekeh_emami']:,.0f}` تومان\n"
@@ -137,16 +142,16 @@ def handle_bubble(message):
         intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
         percent = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
         emoji = "🔴" if percent > 0 else "🟢"
-        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n📊 حباب: `{percent:.2f}%` {emoji}", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n📊 میزان حباب: `{percent:.2f}%` {emoji}\n\n*نکته: حباب مثبت یعنی گران‌تر از قیمت جهانی و حباب منفی یعنی ارزان‌تر.*", parse_mode='Markdown')
     except:
-        bot.reply_to(message, "❌ داده‌ها ناقص است.")
+        bot.reply_to(message, "❌ خطا در محاسبه. لطفاً قیمت لحظه‌ای را چک کنید.")
 
 @bot.message_handler(func=lambda m: m.text == "🧠 مشاوره بازار")
 def handle_advice(message):
-    bot.send_message(message.chat.id, "🤖 در حال تحلیل داده‌های زنده...")
+    bot.send_message(message.chat.id, "🤖 در حال تحلیل داده‌های زنده بازار...")
     d = fetch_market_data()
     summary, advice = get_logic_analysis(d)
-    msg = f"✨ **تحلیل کارشناسی**\n\n📝 {summary}\n\n💡 **پیشنهاد:** {advice}"
+    msg = f"✨ **تحلیل اختصاصی ربات**\n\n📝 {summary}\n\n💡 **پیشنهاد:** {advice}"
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 # ----------------------------------------
