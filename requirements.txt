@@ -3,4 +3,4 @@ flask
 requests
 beautifulsoup4
 jdatetime
-google-genai
+openai
