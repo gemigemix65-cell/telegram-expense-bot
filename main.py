@@ -10,8 +10,7 @@ import time
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-# ورژن استقرار (هر بار که کد را تغییر می‌دهید این عدد را دستی بالا ببرید)
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BiEKVyewj956z3tnPMKtbSjUh2JLziPf" 
@@ -23,10 +22,10 @@ PORT = int(os.environ.get('PORT', 3000))
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
 
-MARKET_DATA = {"items": {}, "update_time": "نیاز به به‌روزرسانی"}
+MARKET_DATA = {"items": {}, "update_time": "به‌روزرسانی نشده"}
 
 # ----------------------------------------
-#           *** ۲. موتور واکشی نسخه رایگان ***
+#           *** ۲. موتور واکشی با عیب‌یابی دقیق ***
 # ----------------------------------------
 
 def sync_market_data():
@@ -34,34 +33,51 @@ def sync_market_data():
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
     
     try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        # ارسال درخواست با هدرهای مرورگر برای جلوگیری از بلاک شدن
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=12)
         
-        if response.status_code == 402:
-            return False, "💳 اعتبار API تمام شده (402)"
-        
-        if response.status_code == 200:
-            res_json = response.json()
-            if not res_json.get('successful'):
-                return False, f"خطای API: {res_json.get('message_error')}"
+        # بررسی فیزیکی پاسخ
+        if not response.text or response.text.strip() == "":
+            return False, "پاسخ سرور کاملاً خالی (Empty Body) است."
 
-            temp_items = {}
-            for sec in ['gold', 'currency']:
-                data_block = res_json.get(sec, {})
-                if isinstance(data_block, dict):
-                    for sub_list in data_block.values():
-                        if isinstance(sub_list, list):
-                            for item in sub_list:
-                                symbol = item.get('symbol')
-                                if symbol: temp_items[symbol] = item
-            
-            if temp_items:
-                MARKET_DATA["items"] = temp_items
-                MARKET_DATA["update_time"] = jdatetime.datetime.now().strftime("%H:%M:%S")
-                return True, "OK"
+        if response.status_code != 200:
+            return False, f"خطای HTTP: {response.status_code}"
+
+        try:
+            res_json = response.json()
+        except Exception:
+            return False, f"پاسخ سرور JSON معتبر نیست: {response.text[:50]}..."
+
+        if not res_json.get('successful'):
+            msg = res_json.get('message_error') or "نامشخص"
+            return False, f"خطای منطقی API: {msg}"
+
+        # استخراج دیتا
+        temp_items = {}
+        for sec in ['gold', 'currency']:
+            data_block = res_json.get(sec, {})
+            if isinstance(data_block, dict):
+                for sub_list in data_block.values():
+                    if isinstance(sub_list, list):
+                        for item in sub_list:
+                            symbol = item.get('symbol')
+                            if symbol: temp_items[symbol] = item
         
-        return False, f"کد وضعیت: {response.status_code}"
+        if not temp_items:
+            return False, "دیتای طلا/ارز در JSON یافت نشد (لیست خالی)."
+
+        MARKET_DATA["items"] = temp_items
+        MARKET_DATA["update_time"] = jdatetime.datetime.now().strftime("%H:%M:%S")
+        return True, "OK"
+
+    except requests.exceptions.Timeout:
+        return False, "زمان انتظار تمام شد (Timeout). سرور API کند است."
     except Exception as e:
-        return False, f"خطای اتصال: {str(e)}"
+        return False, f"خطای سیستمی: {str(e)}"
 
 def get_p(symbol):
     item = MARKET_DATA["items"].get(symbol, {})
@@ -85,18 +101,15 @@ def main_menu():
 @bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
 def start(message):
     success, msg_result = sync_market_data()
-    status = "🟢 آنلاین" if success else f"🔴 خطا: {msg_result}"
+    status = "🟢 آنلاین" if success else f"🔴 وضعیت: {msg_result}"
     
-    # نمایش ورژن در پیام خوش‌آمدگویی
     welcome_text = (
-        f"🤖 **ربات تحلیلگر بازار طلا و ارز**\n"
-        f"📦 ورژن استقرار: `{VERSION}`\n"
+        f"🤖 **ربات تحلیلگر بازار**\n"
+        f"📦 نسخه استقرار: `{VERSION}`\n"
         f"--------------------------\n"
-        f"وضعیت اتصال: {status}\n"
-        f"آخرین آپدیت داخلی: `{MARKET_DATA['update_time']}`\n\n"
-        f"لطفاً یک گزینه را انتخاب کنید:"
+        f"وضعیت اتصال: {status}\n\n"
+        f"اگر وضعیت قرمز است، کلید API را در پنل BrsApi چک کنید."
     )
-    
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
@@ -105,7 +118,7 @@ def handle_price(message):
     success, error_msg = sync_market_data()
     
     if not success:
-        bot.reply_to(message, f"❌ **خطا در دریافت دیتا:**\n{error_msg}")
+        bot.reply_to(message, f"⚠️ **خطا در واکشی دیتا:**\n`{error_msg}`")
         return
 
     # استخراج مقادیر
@@ -128,7 +141,7 @@ def handle_changes(message):
     sync_market_data()
     g = MARKET_DATA["items"].get("IR_GOLD_18K", {})
     pct = g.get('change_percent', 0)
-    bot.send_message(message.chat.id, f"📊 درصد تغییرات امروز طلا: `{pct}%` (ورژن {VERSION})")
+    bot.send_message(message.chat.id, f"📊 درصد تغییرات طلا: `{pct}%` (نسخه {VERSION})")
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
@@ -142,7 +155,7 @@ def handle_bubble(message):
         bubble = ((p_gold - intrinsic) / intrinsic) * 100
         bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب**\nحباب فعلی: `{bubble:.2f}%`", parse_mode='Markdown')
     else:
-        bot.reply_to(message, "❌ دیتا برای محاسبه حباب در دسترس نیست.")
+        bot.reply_to(message, "❌ دیتا ناقص است.")
 
 # ----------------------------------------
 #           *** ۴. اجرای سرور ***
@@ -155,7 +168,7 @@ def webhook():
 
 @server.route('/')
 def index():
-    return f"Bot Version {VERSION} is active!", 200
+    return f"Status: Running v{VERSION}", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
