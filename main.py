@@ -10,9 +10,12 @@ import time
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
+# کلید هوش مصنوعی شما از لیارا
+LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTQ1Y2M1NzM2MzY3MzU2MWRhMWM1YzgiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2MTgxOTc1fQ.aMxk_ih1L050h5HzYFUHVxnDudltKMepHw_jOiiPKvc"
+
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
 
@@ -55,6 +58,31 @@ def get_p(symbol):
     except:
         return 0
 
+# --- تابع جدید: ارتباط با هوش مصنوعی لیارا ---
+def ask_liara_ai(prompt):
+    url = "https://api.liara.ai/v1/chat/completions" # آدرس استاندارد لیارا
+    headers = {
+        "Authorization": f"Bearer {LIARA_AI_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "llama3-70b-8192", # مدل قدرتمند و رایگان در اکثر پنل‌ها
+        "messages": [
+            {"role": "system", "content": "تو 'مومو' هستی، یک تحلیلگر خبره بازار طلای ایران. پاسخ‌هایت کوتاه، صمیمی، فارسی و بر اساس منطق اقتصادی باشد. به کاربر بگو بخرد یا بفروشد."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            return None # اگر خطا داد، نال برگردان تا از روش دستی استفاده کنیم
+    except:
+        return None
+
 # ----------------------------------------
 #           *** ۳. هندلرهای تلگرام ***
 # ----------------------------------------
@@ -63,7 +91,7 @@ def main_menu():
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("💰 قیمت لحظه‌ای", "📊 نمودار تغییرات")
     markup.row("🧮 ماشین‌حساب", "⚪️ حباب طلا")
-    markup.row("🧠 تحلیل هوشمند", "📉 تحلیل تکنیکال")
+    markup.row("🧠 تحلیل هوشمند (AI)", "📉 تحلیل تکنیکال")
     markup.row("🔄 شروع مجدد")
     return markup
 
@@ -72,16 +100,15 @@ def main_menu():
 def start(message):
     sync_market_data()
     welcome_text = (
-        f"✨ **ربات تحلیل بازار طلای شخصی مومو**\n\n"
-        f"👤 مومو هستم، دستیار شما.\n\n"
+        f"✨ **ربات هوشمند بازار طلا (مومو)**\n\n"
+        f"👤 سلام! من مومو هستم. با هوش مصنوعی جدیدم در خدمتم.\n\n"
         f"--------------------------\n\n"
-        f"📡 وضعیت: 🟢 آنلاین\n\n"
-        f"📅 تاریخ امروز: `{MARKET_DATA['update_date']}`\n\n"
-        f"⏰ ساعت به‌روزرسانی: `{MARKET_DATA['update_time']}`"
+        f"📡 وضعیت شبکه: 🟢 آنلاین\n\n"
+        f"📅 تاریخ: `{MARKET_DATA['update_date']}`\n\n"
+        f"⏰ ساعت: `{MARKET_DATA['update_time']}`"
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode='Markdown')
 
-# --- ۱. قیمت لحظه‌ای (اصلاح فواصل و واحدها) ---
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
     sync_market_data()
@@ -104,141 +131,121 @@ def handle_price(message):
            f"`{p_ons:,.2f}` دلار")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-# --- ۲. ماشین حساب (نمایش روند محاسبه) ---
 @bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب")
 def calc_start(message):
-    msg = bot.send_message(message.chat.id, "⚖️ **وزن طلا** را به گرم وارد کنید:\n(مثال: 4.5)")
+    msg = bot.send_message(message.chat.id, "⚖️ **وزن طلا** را وارد کنید (گرم):\n(مثال: 4.5)")
     bot.register_next_step_handler(msg, calc_step_2)
 
 def calc_step_2(message):
     try:
         weight = float(message.text)
-        msg = bot.send_message(message.chat.id, "➕ **درصد اجرت/سود** را وارد کنید:\n(عدد خالی، مثلا: 5)")
+        msg = bot.send_message(message.chat.id, "➕ **درصد اجرت/سود** را وارد کنید:\n(عدد خالی)")
         bot.register_next_step_handler(msg, calc_final, weight)
-    except:
-        bot.send_message(message.chat.id, "⚠️ لطفا عدد انگلیسی وارد کنید.")
+    except: bot.send_message(message.chat.id, "⚠️ عدد انگلیسی وارد کنید.")
 
 def calc_final(message, weight):
     try:
         sync_market_data()
         wage_pct = float(message.text)
         p_gold = get_p("IR_GOLD_18K")
-        
-        # محاسبه
-        price_raw = p_gold * weight
-        extra_amount = price_raw * (wage_pct / 100)
-        total_price = price_raw + extra_amount
-        
-        res = (f"🧮 **فاکتور محاسبه مومو**\n\n"
+        total = (p_gold * weight) + ((p_gold * weight) * (wage_pct / 100))
+        res = (f"🧮 **فاکتور مومو**\n\n"
                f"1️⃣ فرمول:\n"
-               f"(`{weight} گرم` × `{p_gold:,.0f}`) + `{wage_pct}%`\n\n"
-               f"2️⃣ مبلغ نهایی قابل پرداخت:\n"
-               f"💰 **`{total_price:,.0f}` تومان**")
+               f"(`{weight} g` × `{p_gold:,.0f}`) + `{wage_pct}%`\n\n"
+               f"2️⃣ مبلغ نهایی:\n"
+               f"💰 **`{total:,.0f}` تومان**")
         bot.send_message(message.chat.id, res, parse_mode='Markdown')
-    except:
-        bot.send_message(message.chat.id, "⚠️ خطا در محاسبه.")
+    except: bot.send_message(message.chat.id, "⚠️ خطا.")
 
-# --- ۳. حباب طلا (فرمول و رنگ‌بندی) ---
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
     sync_market_data()
     p_gold = get_p("IR_GOLD_18K")
     p_usd = get_p("USD")
     p_ons = get_p("XAUUSD")
-    
-    # فرمول ارزش ذاتی: (انس * دلار * 0.75) / 31.1035
     intrinsic = (p_ons * p_usd * 0.75) / 31.1035
-    bubble_val = p_gold - intrinsic
-    bubble_pct = (bubble_val / intrinsic) * 100
+    bubble_pct = ((p_gold - intrinsic) / intrinsic) * 100
+    status = "🔴 حباب مثبت (گران)" if bubble_pct > 0 else "🟢 حباب منفی (ارزان)"
     
-    # تعیین وضعیت
-    if bubble_pct > 0:
-        status_icon = "🔴"
-        status_text = "حباب مثبت (گران)"
-    else:
-        status_icon = "🟢"
-        status_text = "حباب منفی (ارزان)"
-        
     msg = (f"⚪️ **آنالیز حباب طلا**\n\n"
-           f"🧮 فرمول محاسبه:\n"
+           f"🧮 فرمول:\n"
            f"(انس × دلار × ۰.۷۵) ÷ ۳۱.۱۰\n\n"
-           f"💎 ارزش ذاتی (واقعی): `{intrinsic:,.0f}` تومان\n\n"
-           f"🏷 قیمت بازار (فعلی): `{p_gold:,.0f}` تومان\n\n"
-           f"📊 مقدار حباب: `{abs(bubble_val):,.0f}` تومان\n\n"
-           f"{status_icon} وضعیت: **{status_text}**\n"
-           f"درصد اختلاف: `{bubble_pct:.2f}%`")
+           f"💎 ارزش ذاتی: `{intrinsic:,.0f}` تومان\n\n"
+           f"🏷 قیمت فعلی: `{p_gold:,.0f}` تومان\n\n"
+           f"📊 مقدار حباب: `{abs(p_gold - intrinsic):,.0f}` تومان\n\n"
+           f"وضعیت: **{status}**\n"
+           f"درصد: `{bubble_pct:.2f}%`")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-# --- ۴. نمودار تغییرات (شبیه‌سازی تاریخچه) ---
 @bot.message_handler(func=lambda m: m.text == "📊 نمودار تغییرات")
 def handle_changes(message):
     sync_market_data()
     item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
+    pct = float(item.get('change_percent', 0))
+    val = float(item.get('change_value', 0))
+    curr = get_p("IR_GOLD_18K")
+    yesterday = curr - val
+    bar = "🟩" * min(int(pct*4), 10) if pct >=0 else "🟥" * min(abs(int(pct*4)), 10)
     
-    current_price = get_p("IR_GOLD_18K")
-    pct_change = float(item.get('change_percent', 0))
-    value_change = float(item.get('change_value', 0))
-    
-    # محاسبه قیمت دیروز (مهندسی معکوس)
-    yesterday_price = current_price - value_change
-    
-    # وضعیت
-    trend = "🔺 افزایش" if pct_change >= 0 else "🔻 کاهش"
-    
-    # نمودار متنی
-    bar_count = min(abs(int(pct_change * 4)), 10)
-    chart_bar = "🟩" * bar_count if pct_change >= 0 else "🟥" * bar_count
-    if bar_count == 0: chart_bar = "⬜️ بدون تغییر"
-
-    msg = (f"📊 **گزارش نوسانات طلا (۱۸ عیار)**\n\n"
+    msg = (f"📊 **گزارش نوسانات طلا**\n\n"
            f"📅 تاریخ: `{MARKET_DATA['update_date']}`\n\n"
-           f"💵 قیمت امروز: `{current_price:,.0f}` تومان\n\n"
-           f"🗓 قیمت دیروز: `{yesterday_price:,.0f}` تومان\n\n"
-           f"📉 تغییر نسبت به دیروز:\n"
-           f"{trend} `{abs(value_change):,.0f}` تومان ({pct_change}%)\n\n"
-           f"📊 نمودار تصویری:\n"
-           f"{chart_bar}\n\n"
-           f"⏳ قیمت هفته پیش: (در حال جمع‌آوری دیتا...)\n"
-           f"⏳ قیمت ماه پیش: (در حال جمع‌آوری دیتا...)")
+           f"💵 امروز: `{curr:,.0f}` تومان\n\n"
+           f"🗓 دیروز: `{yesterday:,.0f}` تومان\n\n"
+           f"📉 تغییرات:\n"
+           f"{'🔺' if pct>=0 else '🔻'} `{abs(val):,.0f}` تومان ({pct}%)\n\n"
+           f"📊 نمودار:\n{bar or '⬜️ بدون تغییر'}\n\n"
+           f"⏳ هفته/ماه پیش: (نیازمند سابقه)")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-# --- ۵. تحلیل هوشمند (پیشنهاد خرید/فروش) ---
-@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
+# --- بخش هوش مصنوعی پیشرفته ---
+@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند (AI)")
 def handle_ai(message):
+    bot.send_chat_action(message.chat.id, 'typing') # نمایش "در حال تایپ..."
     sync_market_data()
+    
     p_gold = get_p("IR_GOLD_18K")
     p_usd = get_p("USD")
     p_ons = get_p("XAUUSD")
     intrinsic = (p_ons * p_usd * 0.75) / 31.1035
     bubble_pct = ((p_gold - intrinsic) / intrinsic) * 100
     
-    if bubble_pct > 3:
-        advice = "❌ **الان وقت خرید نیست!**\nحباب قیمت مثبت است و احتمال اصلاح (ارزان شدن) وجود دارد. اگر فروشنده هستید، زمان بدی نیست."
-    elif bubble_pct < -0.5:
-        advice = "✅ **پیشنهاد خرید جذاب**\nقیمت بازار زیر ارزش واقعی است. خرید در این نقطه کم‌ریسک و منطقی است."
+    # ۱. ساخت متن درخواست برای هوش مصنوعی
+    prompt_text = (
+        f"قیمت طلای ۱۸ عیار ایران: {p_gold} تومان.\n"
+        f"قیمت دلار بازار آزاد: {p_usd} تومان.\n"
+        f"انس جهانی طلا: {p_ons} دلار.\n"
+        f"حباب قیمت طلا: {bubble_pct:.2f} درصد.\n"
+        f"با توجه به اینکه اگر حباب بالای ۳ درصد باشد خطرناک است و اگر منفی باشد فرصت خرید است، "
+        f"یک تحلیل کوتاه ۳ خطی بنویس و صریح بگو الان وقت خرید است یا فروش؟ "
+        f"لحن تو دوستانه و با اسم 'مومو' باشد."
+    )
+    
+    # ۲. ارسال به هوش مصنوعی لیارا
+    ai_response = ask_liara_ai(prompt_text)
+    
+    # ۳. نمایش نتیجه
+    if ai_response:
+        final_msg = f"🧠 **تحلیل اختصاصی هوش مصنوعی مومو**\n\n{ai_response}"
     else:
-        advice = "⚖️ **بازار متعادل**\nقیمت منطقی است اما هیجان خاصی ندارد. اگر نیاز دارید بخرید، اما عجله نکنید."
+        # اگر هوش مصنوعی قطع بود، از روش دستی استفاده کن
+        fallback_advice = "❌ **حباب بالاست!**" if bubble_pct > 3 else "✅ **فرصت خرید!**"
+        final_msg = (f"🧠 **تحلیل هوشمند (حالت آفلاین)**\n\n"
+                     f"ارتباط با مغز هوشمند برقرار نشد، اما طبق فرمول:\n"
+                     f"حباب فعلی: `{bubble_pct:.2f}%`\n"
+                     f"پیشنهاد: {fallback_advice}")
+                     
+    bot.send_message(message.chat.id, final_msg, parse_mode='Markdown')
 
-    bot.send_message(message.chat.id, f"🧠 **مشاور هوشمند مومو**\n\n{advice}", parse_mode='Markdown')
-
-# --- ۶. تحلیل تکنیکال (ساده‌سازی شده) ---
 @bot.message_handler(func=lambda m: m.text == "📉 تحلیل تکنیکال")
-def handle_technical(message):
+def handle_tech(message):
     sync_market_data()
     p = get_p("IR_GOLD_18K")
-    
-    # نقاط فرضی بر اساس نوسان ۱.۵ درصدی
-    support = p * 0.985
-    resistance = p * 1.015
-    
-    msg = (f"📉 **تحلیل تکنیکال (به زبان ساده)**\n\n"
+    msg = (f"📉 **تحلیل تکنیکال ساده**\n\n"
            f"📍 قیمت فعلی: `{p:,.0f}` تومان\n\n"
-           f"🛡 **کف قیمتی (حمایت):**\n"
-           f"`{support:,.0f}` تومان\n"
-           f"(یعنی اگر قیمت بریزد، احتمالا تا اینجا پایین می‌آید و دوباره بالا می‌رود)\n\n"
-           f"🚀 **سقف قیمتی (مقاومت):**\n"
-           f"`{resistance:,.0f}` تومان\n"
-           f"(یعنی برای رد شدن از این قیمت کار سختی دارد)")
+           f"🛡 **کف حمایتی:** `{p*0.985:,.0f}`\n"
+           f"(قیمت معمولا از اینجا پایین‌تر نمی‌رود)\n\n"
+           f"🚀 **سقف مقاومتی:** `{p*1.015:,.0f}`\n"
+           f"(قیمت برای رد شدن از این عدد کار سختی دارد)")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 # ----------------------------------------
@@ -252,7 +259,7 @@ def webhook():
 
 @server.route('/')
 def index():
-    return f"Momo Bot v{VERSION} Ready.", 200
+    return f"Momo Bot AI v{VERSION} Running.", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
