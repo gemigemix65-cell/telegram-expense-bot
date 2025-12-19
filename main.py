@@ -13,6 +13,7 @@ import time
 
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BiEKVyewj956z3tnPMKtbSjUh2JLziPf" 
+ADMIN_ID = "8221583925" # شناسه شما برای دریافت پیام فعال سازی
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
@@ -20,101 +21,65 @@ PORT = int(os.environ.get('PORT', 3000))
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
 
-# حافظه کش برای قیمت‌ها
 CACHE = {
     "data": {
         "gold_18k_gram": 0, "sekeh_emami": 0, "usd_rial": 0, 
         "ounce_usd": 0.0, "last_update": "بروزرسانی نشده"
-    }
+    },
+    "raw": None
 }
 
 # ----------------------------------------
-#           *** ۲. دریافت داده (بر اساس جدول نمادهای سایت) ***
+#           *** ۲. دریافت داده از API ***
 # ----------------------------------------
 
 def fetch_market_data():
     global CACHE
-    # آدرس API رایگان طبق مستندات صفحه وب ارسالی
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
     try:
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code == 200:
             data = response.json()
+            CACHE['raw'] = data # ذخیره برای دکمه مقایسه
             
-            # ۱. استخراج طلا و سکه از بخش 'gold' بر اساس symbol
             if 'gold' in data:
                 for item in data['gold']:
                     sym = item.get('symbol', '')
-                    price = int(item.get('price', 0))
-                    
-                    if sym == "IR_18K_GOLD": # طلای 18 عیار
-                        CACHE['data']['gold_18k_gram'] = price / 10
-                    elif sym == "IR_COIN_EMAMI": # سکه امامی
-                        CACHE['data']['sekeh_emami'] = price / 10
-                    elif sym == "XAU_USD": # انس طلا (قیمت جهانی به دلار)
-                        CACHE['data']['ounce_usd'] = float(item.get('price', 0))
+                    price = float(item.get('price', 0))
+                    if sym == "IR_18K_GOLD": CACHE['data']['gold_18k_gram'] = price / 10
+                    elif sym == "IR_COIN_EMAMI": CACHE['data']['sekeh_emami'] = price / 10
+                    elif sym == "XAU_USD": CACHE['data']['ounce_usd'] = price
 
-            # ۲. استخراج دلار از بخش 'currency' بر اساس symbol
             if 'currency' in data:
                 for item in data['currency']:
-                    if item.get('symbol') == "USD": # دلار آمریکا
-                        CACHE['data']['usd_rial'] = int(item.get('price', 0)) / 10
+                    if item.get('symbol') == "USD":
+                        CACHE['data']['usd_rial'] = float(item.get('price', 0)) / 10
 
-            # تنظیم تاریخ شمسی و ساعت
-            now = jdatetime.datetime.now()
-            CACHE['data']['last_update'] = now.strftime("%Y/%m/%d ساعت %H:%M")
+            CACHE['data']['last_update'] = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M")
             return CACHE['data']
-            
     except Exception as e:
-        print(f"Fetch Error: {e}")
-    
+        print(f"Error: {e}")
     return CACHE['data']
 
 # ----------------------------------------
-#           *** ۳. موتور تحلیل منطقی ***
-# ----------------------------------------
-
-def get_logic_analysis(d):
-    if d['gold_18k_gram'] < 1000:
-        return "⚠️ داده‌های بازار هنوز کامل دریافت نشده است.", "لطفاً دقایقی دیگر دوباره تلاش کنید."
-
-    # فرمول ارزش ذاتی طلا ۱۸ عیار
-    # (انس * قیمت دلار به ریال * ۰.۷۵) / ۳۱.۱۰۳۵ / ۱۰ (برای تومان)
-    intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
-    bubble = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
-    
-    if bubble > 2.5:
-        summary = f"حباب مثبت طلا: `{bubble:.1f}%`"
-        advice = "❌ در حال حاضر قیمت داخلی حباب دارد. خرید در این سطح پرریسک است."
-    elif -1 <= bubble <= 2.5:
-        summary = "بازار در وضعیت تعادل (بدون حباب)"
-        advice = "⚖️ قیمت‌ها با انس جهانی هماهنگ است. مناسب برای پس‌انداز."
-    else:
-        summary = f"حباب منفی طلا: `{bubble:.1f}%`"
-        advice = "✅ قیمت داخلی ارزان‌تر از ارزش جهانی است. فرصت خرید عالی!"
-        
-    return summary, advice
-
-# ----------------------------------------
-#           *** ۴. هندلرهای تلگرام ***
+#           *** ۳. هندلرهای دکمه‌ها ***
 # ----------------------------------------
 
 def main_menu():
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("💰 قیمت لحظه‌ای", "⚪️ حباب طلا")
-    markup.row("🧠 مشاوره بازار")
+    markup.row("📊 مقایسه و تغییرات", "🧠 مشاوره")
+    markup.row("🔄 شروع مجدد")
     return markup
 
 @bot.message_handler(commands=['start'])
+@bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
 def start(message):
     bot.send_message(
         message.chat.id, 
-        "🏅 **تحلیلگر هوشمند بازار طلا و ارز**\nداده‌ها با دقت نمادهای سیستمی BrsApi تنظیم شدند.", 
+        "🚀 **ربات با موفقیت راه‌اندازی شد.**\nآماده دریافت دستورات شما هستم.", 
         reply_markup=main_menu(),
         parse_mode='Markdown'
     )
@@ -123,39 +88,57 @@ def start(message):
 def handle_price(message):
     d = fetch_market_data()
     if d['gold_18k_gram'] == 0:
-        bot.reply_to(message, "⚠️ خطای سیستمی در دریافت قیمت. لطفاً لحظاتی دیگر مجدد تلاش کنید.")
+        bot.reply_to(message, "❌ خطا در اتصال به BrsApi. لطفاً لحظاتی دیگر تلاش کنید.")
         return
     
-    msg = (f"💰 **آخرین وضعیت بازار**\n"
-           f"📅 بروزرسانی: `{d['last_update']}`\n\n"
+    msg = (f"💰 **آخرین نرخ‌های بازار**\n"
+           f"📅 `{d['last_update']}`\n\n"
            f"🥇 طلا ۱۸ عیار: `{d['gold_18k_gram']:,.0f}` تومان\n"
            f"💵 دلار آزاد: `{d['usd_rial']:,.0f}` تومان\n"
            f"👑 سکه امامی: `{d['sekeh_emami']:,.0f}` تومان\n"
            f"🌐 انس جهانی: `{d['ounce_usd']:,.2f}` دلار")
+    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+
+@bot.message_handler(func=lambda m: m.text == "📊 مقایسه و تغییرات")
+def handle_compare(message):
+    fetch_market_data()
+    data = CACHE['raw']
+    if not data:
+        bot.reply_to(message, "⚠️ دیتایی یافت نشد.")
+        return
+
+    msg = "📊 **مقایسه تغییرات قیمت (نسبت به دیروز)**\n\n"
+    # استخراج تغییرات برای طلا و دلار
+    sources = data.get('gold', []) + data.get('currency', [])
+    for item in sources:
+        if item.get('symbol') in ["IR_18K_GOLD", "USD"]:
+            name = "طلا ۱۸ عیار" if item.get('symbol') == "IR_18K_GOLD" else "دلار"
+            change_val = float(item.get('change_value', 0)) / 10
+            change_pct = item.get('change_percent', '0')
+            status = "📈 گران‌تر" if float(change_pct) > 0 else "📉 ارزان‌تر"
+            msg += f"🔹 **{name}:**\n{status} شده به مقدار `{abs(change_val):,.0f}` تومان (`{change_pct}%`)\n\n"
     
+    msg += "_تغییرات بر اساس آخرین بسته شدن بازار محاسبه شده است._"
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
     d = fetch_market_data()
-    try:
-        intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
-        percent = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
-        emoji = "🔴" if percent > 0 else "🟢"
-        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n📊 میزان حباب: `{percent:.2f}%` {emoji}\n\n*نکته: حباب مثبت یعنی گران‌تر از قیمت جهانی و حباب منفی یعنی ارزان‌تر.*", parse_mode='Markdown')
-    except:
-        bot.reply_to(message, "❌ خطا در محاسبه. لطفاً قیمت لحظه‌ای را چک کنید.")
+    intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
+    percent = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
+    emoji = "🔴" if percent > 0 else "🟢"
+    bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب**\n\n📊 حباب فعلی: `{percent:.2f}%` {emoji}", parse_mode='Markdown')
 
-@bot.message_handler(func=lambda m: m.text == "🧠 مشاوره بازار")
+@bot.message_handler(func=lambda m: m.text == "🧠 مشاوره")
 def handle_advice(message):
-    bot.send_message(message.chat.id, "🤖 در حال تحلیل داده‌های زنده بازار...")
     d = fetch_market_data()
-    summary, advice = get_logic_analysis(d)
-    msg = f"✨ **تحلیل اختصاصی ربات**\n\n📝 {summary}\n\n💡 **پیشنهاد:** {advice}"
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+    intrinsic = (d['ounce_usd'] * (d['usd_rial'] * 10) * 0.75) / 31.1035 / 10
+    bubble = ((d['gold_18k_gram'] - intrinsic) / intrinsic) * 100
+    advice = "✅ خرید پله‌ای" if bubble < 2 else "❌ فعلاً صبر کنید"
+    bot.send_message(message.chat.id, f"🧠 **مشاوره هوشمند:**\n\nبر اساس محاسبات، پیشنهاد می‌شود: **{advice}**", parse_mode='Markdown')
 
 # ----------------------------------------
-#           *** ۵. وب‌هوک و اجرا ***
+#           *** ۴. وب‌هوک و استقرار ***
 # ----------------------------------------
 
 @server.route(f"/{TOKEN}", methods=['POST'])
@@ -167,4 +150,10 @@ if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=WEBHOOK_URL_BASE + "/" + TOKEN)
+    
+    # ارسال پیام فعال‌سازی به ادمین برای اطلاع از استقرار جدید
+    try:
+        bot.send_message(ADMIN_ID, "✅ **استقرار جدید با موفقیت انجام شد.**\nربات نسخه نهایی فعال و آماده به کار است.")
+    except: pass
+    
     server.run(host="0.0.0.0", port=PORT)
