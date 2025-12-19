@@ -10,10 +10,12 @@ import time
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.0.7"
+# ورژن استقرار جدید
+VERSION = "1.0.8"
 
 TOKEN = os.environ.get("BOT_TOKEN")
-BRS_TOKEN = "BiEKVyewj956z3tnPMKtbSjUh2JLziPf" 
+# جایگزینی کلید جدید شما
+BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
 ADMIN_ID = "8221583925"
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
@@ -25,64 +27,59 @@ bot = telebot.TeleBot(TOKEN)
 MARKET_DATA = {"items": {}, "update_time": "به‌روزرسانی نشده"}
 
 # ----------------------------------------
-#           *** ۲. موتور واکشی با عیب‌یابی دقیق ***
+#           *** ۲. موتور واکشی نسخه v1.0.8 ***
 # ----------------------------------------
 
 def sync_market_data():
     global MARKET_DATA
+    # استفاده از آدرس پایدار با کلید جدید
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
     
     try:
-        # ارسال درخواست با هدرهای مرورگر برای جلوگیری از بلاک شدن
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json'
         }
-        response = requests.get(url, headers=headers, timeout=12)
+        response = requests.get(url, headers=headers, timeout=15)
         
-        # بررسی فیزیکی پاسخ
-        if not response.text or response.text.strip() == "":
-            return False, "پاسخ سرور کاملاً خالی (Empty Body) است."
-
         if response.status_code != 200:
-            return False, f"خطای HTTP: {response.status_code}"
+            return False, f"HTTP Error {response.status_code}"
 
-        try:
-            res_json = response.json()
-        except Exception:
-            return False, f"پاسخ سرور JSON معتبر نیست: {response.text[:50]}..."
-
+        res_json = response.json()
+        
+        # بررسی وضعیت موفقیت در پاسخ API
         if not res_json.get('successful'):
-            msg = res_json.get('message_error') or "نامشخص"
-            return False, f"خطای منطقی API: {msg}"
+            err = res_json.get('message_error', 'خطای ناشناخته از سمت API')
+            return False, f"API Error: {err}"
 
-        # استخراج دیتا
         temp_items = {}
-        for sec in ['gold', 'currency']:
-            data_block = res_json.get(sec, {})
+        # پیمایش بخش‌های طلا و ارز
+        for category in ['gold', 'currency']:
+            data_block = res_json.get(category, {})
             if isinstance(data_block, dict):
                 for sub_list in data_block.values():
                     if isinstance(sub_list, list):
                         for item in sub_list:
                             symbol = item.get('symbol')
-                            if symbol: temp_items[symbol] = item
+                            if symbol:
+                                temp_items[symbol] = item
         
         if not temp_items:
-            return False, "دیتای طلا/ارز در JSON یافت نشد (لیست خالی)."
+            return False, "دیتایی در خروجی یافت نشد."
 
         MARKET_DATA["items"] = temp_items
         MARKET_DATA["update_time"] = jdatetime.datetime.now().strftime("%H:%M:%S")
         return True, "OK"
 
-    except requests.exceptions.Timeout:
-        return False, "زمان انتظار تمام شد (Timeout). سرور API کند است."
     except Exception as e:
-        return False, f"خطای سیستمی: {str(e)}"
+        return False, f"Connection Error: {str(e)}"
 
 def get_p(symbol):
+    """استخراج و تمیز کردن قیمت"""
     item = MARKET_DATA["items"].get(symbol, {})
     price = item.get('price', 0)
     try:
+        # حذف کاما و تبدیل به عدد شناور
         return float(str(price).replace(',', ''))
     except:
         return 0
@@ -101,14 +98,15 @@ def main_menu():
 @bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
 def start(message):
     success, msg_result = sync_market_data()
-    status = "🟢 آنلاین" if success else f"🔴 وضعیت: {msg_result}"
+    status = "🟢 متصل به بازار" if success else f"🔴 خطا: {msg_result}"
     
     welcome_text = (
-        f"🤖 **ربات تحلیلگر بازار**\n"
-        f"📦 نسخه استقرار: `{VERSION}`\n"
+        f"🤖 **ربات تحلیلگر هوشمند**\n"
+        f"📦 ورژن استقرار: `{VERSION}`\n"
         f"--------------------------\n"
-        f"وضعیت اتصال: {status}\n\n"
-        f"اگر وضعیت قرمز است، کلید API را در پنل BrsApi چک کنید."
+        f"وضعیت کلید جدید: {status}\n"
+        f"آخرین آپدیت: `{MARKET_DATA['update_time']}`\n\n"
+        f"آماده پردازش درخواست شما هستم."
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode='Markdown')
 
@@ -118,16 +116,16 @@ def handle_price(message):
     success, error_msg = sync_market_data()
     
     if not success:
-        bot.reply_to(message, f"⚠️ **خطا در واکشی دیتا:**\n`{error_msg}`")
+        bot.reply_to(message, f"❌ **خطا در دریافت قیمت:**\n`{error_msg}`")
         return
 
-    # استخراج مقادیر
+    # استخراج مقادیر از دیتای جدید
     p_gold = get_p("IR_GOLD_18K") / 10
     p_sekeh = get_p("IR_COIN_EMAMI") / 10
     p_usd = get_p("USD") / 10
     p_ons = get_p("XAUUSD")
 
-    msg = (f"💰 **نرخ‌های بازار (تومان)**\n"
+    msg = (f"💰 **آخرین نرخ‌های بازار (تومان)**\n"
            f"📦 Ver: `{VERSION}` | ⏰ `{MARKET_DATA['update_time']}`\n\n"
            f"🥇 طلا ۱۸ عیار: `{p_gold:,.0f}`\n"
            f"👑 سکه امامی: `{p_sekeh:,.0f}`\n"
@@ -139,9 +137,9 @@ def handle_price(message):
 @bot.message_handler(func=lambda m: m.text == "📊 تغییرات")
 def handle_changes(message):
     sync_market_data()
-    g = MARKET_DATA["items"].get("IR_GOLD_18K", {})
-    pct = g.get('change_percent', 0)
-    bot.send_message(message.chat.id, f"📊 درصد تغییرات طلا: `{pct}%` (نسخه {VERSION})")
+    item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
+    pct = item.get('change_percent', '0')
+    bot.send_message(message.chat.id, f"📊 تغییرات امروز طلا ۱۸ عیار: `{pct}%` \n(نسخه {VERSION})", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
@@ -151,11 +149,12 @@ def handle_bubble(message):
     p_ons = get_p("XAUUSD")
     
     if p_gold > 0 and p_usd > 0:
+        # فرمول: (انس * قیمت دلار * ۰.۷۵) / ۳۱.۱۰۳۵
         intrinsic = (p_ons * (p_usd * 10) * 0.75) / 31.1035 / 10
         bubble = ((p_gold - intrinsic) / intrinsic) * 100
-        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب**\nحباب فعلی: `{bubble:.2f}%`", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n💰 ارزش ذاتی: `{intrinsic:,.0f}` تومان\n🎈 حباب: `{bubble:.2f}%`", parse_mode='Markdown')
     else:
-        bot.reply_to(message, "❌ دیتا ناقص است.")
+        bot.reply_to(message, "❌ خطا در محاسبه؛ دیتا از سرور دریافت نشد.")
 
 # ----------------------------------------
 #           *** ۴. اجرای سرور ***
@@ -168,7 +167,7 @@ def webhook():
 
 @server.route('/')
 def index():
-    return f"Status: Running v{VERSION}", 200
+    return f"Bot v{VERSION} is Running with New Key", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
