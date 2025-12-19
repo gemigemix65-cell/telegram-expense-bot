@@ -27,16 +27,16 @@ MARKET_DATA = {
 }
 
 # ----------------------------------------
-#           *** ۲. موتور واکشی اصلاح شده ***
+#           *** ۲. موتور واکشی اصلاح شده (v103) ***
 # ----------------------------------------
 
 def sync_market_data():
     global MARKET_DATA
-    # استفاده از آدرس نسخه رایگان که با کلید شما سازگارتر است
+    # استفاده از آدرس مستقیم برای پایداری بیشتر
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0',
         'Accept': 'application/json'
     }
 
@@ -44,43 +44,46 @@ def sync_market_data():
         response = requests.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             res_json = response.json()
-            
             temp_items = {}
             
-            # استخراج طلا (بر اساس ساختار JSON ارسالی شما)
+            # --- استخراج طلا ---
+            # gold در اینجا یک دیکشنری است: {"ounce": [...], "type": [...], "coin": [...]}
             gold_data = res_json.get('gold', {})
-            for section in gold_data: # پیمایش ounce, type, coin
-                if isinstance(gold_data[section], list):
-                    for item in gold_data[section]:
-                        symbol = item.get('symbol')
-                        if symbol:
-                            temp_items[symbol] = item
+            if isinstance(gold_data, dict):
+                for category in gold_data.values():
+                    if isinstance(category, list):
+                        for item in category:
+                            symbol = item.get('symbol')
+                            if symbol:
+                                temp_items[symbol] = item
             
-            # استخراج ارزها
+            # --- استخراج ارزها ---
+            # currency در اینجا یک دیکشنری است: {"free": [...], "sana": [...], "nima": [...]}
             currency_data = res_json.get('currency', {})
-            for section in currency_data: # پیمایش free, sana, nima
-                if isinstance(currency_data[section], list):
-                    for item in currency_data[section]:
-                        symbol = item.get('symbol')
-                        if symbol:
-                            temp_items[symbol] = item
+            if isinstance(currency_data, dict):
+                for category in currency_data.values():
+                    if isinstance(category, list):
+                        for item in category:
+                            symbol = item.get('symbol')
+                            if symbol:
+                                temp_items[symbol] = item
 
             MARKET_DATA["items"] = temp_items
             MARKET_DATA["update_time"] = jdatetime.datetime.now().strftime("%H:%M:%S")
             return True
-        else:
-            print(f"API Error: Status Code {response.status_code}")
     except Exception as e:
-        print(f"Connection Error: {e}")
+        print(f"Sync Error: {e}")
     return False
 
 def get_p(symbol):
     """استخراج قیمت از حافظه و تبدیل به عدد"""
     item = MARKET_DATA["items"].get(symbol, {})
+    # در دیتای شما قیمت مستقیم عدد است، اما برای احتیاط تبدیل می‌کنیم
     price = item.get('price', 0)
     try:
-        # حذف کاما و تبدیل به عدد
-        return float(str(price).replace(',', ''))
+        if isinstance(price, str):
+            price = price.replace(',', '')
+        return float(price)
     except:
         return 0
 
@@ -101,7 +104,7 @@ def start(message):
     sync_market_data()
     bot.send_message(
         message.chat.id, 
-        "✅ **ربات با موفقیت متصل شد.**\nآماده دریافت نرخ‌های بازار...", 
+        "✅ **ربات تحلیلگر طلا و ارز به‌روزرسانی شد.**", 
         reply_markup=main_menu()
     )
 
@@ -110,17 +113,17 @@ def handle_price(message):
     bot.send_chat_action(message.chat.id, 'typing')
     
     if not sync_market_data():
-        bot.reply_to(message, "⚠️ خطا در ارتباط با سرور BrsApi. لطفاً لحظاتی دیگر تلاش کنید.")
+        bot.reply_to(message, "⚠️ منبع قیمت موقتاً در دسترس نیست.")
         return
 
-    # استخراج سمبل‌ها طبق JSON شما
+    # استخراج سمبل‌ها طبق JSON دقیق شما
     p_gold = get_p("IR_GOLD_18K") / 10
     p_sekeh = get_p("IR_COIN_EMAMI") / 10
     p_usd = get_p("USD") / 10
     p_ons = get_p("XAUUSD")
 
     if p_gold == 0:
-        bot.send_message(message.chat.id, "❌ متاسفانه دیتای بازار در این لحظه در دسترس نیست.")
+        bot.send_message(message.chat.id, "❌ خطای واکشی دیتا. لطفاً دقایقی دیگر تلاش کنید.")
         return
 
     msg = (f"💰 **آخرین نرخ‌های بازار**\n"
@@ -137,7 +140,7 @@ def handle_changes(message):
     sync_market_data()
     g = MARKET_DATA["items"].get("IR_GOLD_18K", {})
     pct = g.get('change_percent', 0)
-    val = float(str(g.get('change_value', 0)).replace(',','')) / 10
+    val = get_p("IR_GOLD_18K") * (float(pct)/100) / 10
     
     status = "📈 صعودی" if float(pct) >= 0 else "📉 نزولی"
     bot.send_message(message.chat.id, f"📊 **تغییرات طلا ۱۸ عیار:**\n\nوضعیت: {status}\nمقدار: `{abs(val):,.0f}` تومان\nدرصد: `{pct}%`", parse_mode='Markdown')
@@ -150,16 +153,15 @@ def handle_bubble(message):
     p_ons = get_p("XAUUSD")
     
     if p_gold > 0 and p_usd > 0:
-        # فرمول دقیق حباب
         intrinsic = (p_ons * (p_usd * 10) * 0.75) / 31.1035 / 10
         bubble = ((p_gold - intrinsic) / intrinsic) * 100
-        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n💰 ارزش ذاتی: `{intrinsic:,.0f}`\n🎈 حباب: `{bubble:.2f}%`", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n💰 ارزش ذاتی: `{intrinsic:,.0f}` تومان\n🎈 حباب: `{bubble:.2f}%`", parse_mode='Markdown')
     else:
-        bot.reply_to(message, "❌ دیتا ناقص است.")
+        bot.reply_to(message, "❌ خطا در محاسبه حباب.")
 
 @bot.message_handler(func=lambda m: m.text == "🧠 مشاوره")
 def handle_advice(message):
-    bot.send_message(message.chat.id, "🧠 بر اساس حباب فعلی، استراتژی خود را تنظیم کنید.")
+    bot.send_message(message.chat.id, "🧠 استراتژی پیشنهادی: خرید پله‌ای در حباب منفی.")
 
 # ----------------------------------------
 #           *** ۴. وب‌هوک و اجرا ***
@@ -172,7 +174,7 @@ def webhook():
 
 @server.route('/')
 def index():
-    return "Bot is Online!", 200
+    return "Bot is Active!", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
