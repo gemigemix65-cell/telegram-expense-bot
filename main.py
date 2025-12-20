@@ -10,10 +10,11 @@ import time
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.2.4"
+VERSION = "1.1.1"
+
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
-LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTQ1Y2M1NzM2MzY3MzU2MWRhMWM1YzgiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2MTgxOTc1fQ.aMxk_ih1L050h5HzYFUHVxnDudltKMepHw_jOiiPKvc"
+ADMIN_ID = "8221583925"
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
@@ -21,30 +22,30 @@ PORT = int(os.environ.get('PORT', 3000))
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
 
-# دیتای پیش‌فرض برای جلوگیری از کرش کردن ربات
-MARKET_DATA = {
-    "items": {}, 
-    "update_time": "در حال به‌روزرسانی...", 
-    "update_date": "---"
-}
+MARKET_DATA = {"items": {}, "update_time": "به‌روزرسانی نشده"}
 
 # ----------------------------------------
-#           *** ۲. توابع کمکی و هوش مصنوعی ***
+#           *** ۲. موتور واکشی نسخه v1.1.1 ***
 # ----------------------------------------
 
 def sync_market_data():
     global MARKET_DATA
     url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
+    
     try:
-        response = requests.get(url, timeout=15)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        
         if response.status_code != 200:
-            return False, f"خطای سرور قیمت: {response.status_code}"
-            
+            return False, f"HTTP Error: {response.status_code}"
+
         res_json = response.json()
         temp_items = {}
-        
-        # استخراج طلا و ارز با بررسی وجود کلیدها
-        for category in ['gold', 'currency']:
+
+        for category in ['gold', 'currency', 'cryptocurrency']:
             data_list = res_json.get(category, [])
             if isinstance(data_list, list):
                 for item in data_list:
@@ -53,43 +54,22 @@ def sync_market_data():
                         temp_items[symbol] = item
         
         if not temp_items:
-            return False, "دیتایی دریافت نشد."
+            return False, "دیتای قیمت در لیست‌ها یافت نشد."
 
         MARKET_DATA["items"] = temp_items
-        now = jdatetime.datetime.now()
-        MARKET_DATA["update_time"] = now.strftime("%H:%M:%S")
-        MARKET_DATA["update_date"] = now.strftime("%Y/%m/%d")
+        MARKET_DATA["update_time"] = jdatetime.datetime.now().strftime("%H:%M:%S")
         return True, "OK"
+
     except Exception as e:
-        return False, str(e)
+        return False, f"Internal Error: {str(e)[:40]}"
 
 def get_p(symbol):
     item = MARKET_DATA["items"].get(symbol, {})
     price = item.get('price', 0)
     try:
-        # پاکسازی قیمت از کاما و تبدیل به عدد
-        clean_price = str(price).replace(',', '')
-        return float(clean_price)
+        return float(str(price).replace(',', ''))
     except:
         return 0
-
-def ask_liara_ai(user_query, system_context="تو مومو هستی، دستیار هوشمند طلا."):
-    url = "https://api.liara.ai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {LIARA_AI_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "llama3-70b-8192", 
-        "messages": [
-            {"role": "system", "content": system_context},
-            {"role": "user", "content": user_query}
-        ],
-        "temperature": 0.7
-    }
-    try:
-        time.sleep(1) # رعایت محدودیت ۱ درخواست در ثانیه
-        response = requests.post(url, headers=headers, json=data, timeout=20)
-        return response.json()['choices'][0]['message']['content']
-    except:
-        return None
 
 # ----------------------------------------
 #           *** ۳. هندلرهای تلگرام ***
@@ -97,127 +77,71 @@ def ask_liara_ai(user_query, system_context="تو مومو هستی، دستیا
 
 def main_menu():
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("💰 قیمت لحظه‌ای", "📊 تغییرات بازار")
-    markup.row("🧮 ماشین‌حساب", "⚪️ حباب طلا")
-    markup.row("🧠 تحلیل هوشمند (AI)", "📉 تحلیل تکنیکال")
-    markup.row("🔄 شروع مجدد")
+    markup.row("💰 قیمت لحظه‌ای", "📊 تغییرات")
+    markup.row("⚪️ حباب طلا", "🔄 شروع مجدد")
     return markup
 
 @bot.message_handler(commands=['start'])
 @bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
 def start(message):
-    success, error_msg = sync_market_data()
-    status_icon = "🟢" if success else "🔴"
+    success, msg_result = sync_market_data()
+    status = "🟢 آنلاین" if success else f"🔴 خطا: {msg_result}"
     
-    welcome = (f"✨ **به ایستگاه هوشمند مومو خوش آمدید**\n\n"
-               f"وضعیت اتصال به بازار: {status_icon}\n\n"
-               f"📅 تاریخ: `{MARKET_DATA['update_date']}`\n\n"
-               f"⏰ ساعت: `{MARKET_DATA['update_time']}`\n\n"
-               f"اگه مشکلی در قیمت‌ها بود، دکمه 'شروع مجدد' رو بزن.")
-    bot.send_message(message.chat.id, welcome, reply_markup=main_menu(), parse_mode='Markdown')
+    welcome_text = (
+        f"🤖 **ربات تحلیلگر بازار**\n"
+        f"📦 ورژن استقرار: `{VERSION}`\n"
+        f"--------------------------\n"
+        f"وضعیت اتصال: {status}\n\n"
+        f"آخرین آپدیت: `{MARKET_DATA['update_time']}`"
+    )
+    bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
-    sync_market_data()
-    p_gold = get_p("IR_GOLD_18K")
-    if p_gold == 0:
-        bot.reply_to(message, "❌ متاسفانه در حال حاضر دریافت قیمت‌ها از منبع اصلی با خطا مواجه شده.")
+    bot.send_chat_action(message.chat.id, 'typing')
+    success, error_msg = sync_market_data()
+    
+    if not success:
+        bot.reply_to(message, f"⚠️ **خطا در دریافت قیمت:**\n`{error_msg}`")
         return
 
-    msg = (f"💰 **قیمت‌های لحظه‌ای بازار**\n\n"
-           f"🥇 **طلا ۱۸ عیار:**\n\n`{p_gold:,.0f}` تومان\n\n"
-           f"💵 **دلار آمریکا:**\n\n`{get_p('USD'):,.0f}` تومان\n\n"
-           f"👑 **سکه امامی:**\n\n`{get_p('IR_COIN_EMAMI'):,.0f}` تومان\n\n"
-           f"🌐 **انس جهانی طلا:**\n\n`{get_p('XAUUSD'):,.2f}` دلار\n\n"
-           f"⏰ به‌روزرسانی: `{MARKET_DATA['update_time']}`")
+    p_gold = get_p("IR_GOLD_18K")
+    p_sekeh = get_p("IR_COIN_EMAMI")
+    p_usd = get_p("USD")
+    p_ons = get_p("XAUUSD")
+    
+    msg = (f"💰 **نرخ‌های بازار (تومان)**\n"
+           f"📦 Ver: `{VERSION}` | ⏰ `{MARKET_DATA['update_time']}`\n\n"
+           f"🥇 طلا ۱۸ عیار: `{p_gold:,.0f}`\n"
+           f"👑 سکه امامی: `{p_sekeh:,.0f}`\n"
+           f"💵 دلار آمریکا: `{p_usd:,.0f}`\n"
+           f"🌐 انس جهانی: `{p_ons:,.2f}` دلار")
+    
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda m: m.text == "📊 تغییرات بازار")
+@bot.message_handler(func=lambda m: m.text == "📊 تغییرات")
 def handle_changes(message):
-    bot.send_chat_action(message.chat.id, 'typing')
     sync_market_data()
+    item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
+    pct = item.get('change_percent', 0)
+    val = get_p("IR_GOLD_18K") * (float(pct)/100)
     
-    current_gold = get_p("IR_GOLD_18K")
-    if current_gold == 0:
-        bot.reply_to(message, "❌ خطا در دریافت دیتای فعلی برای مقایسه.")
-        return
-
-    prompt = (f"امروز {MARKET_DATA['update_date']} است. قیمت فعلی طلا {current_gold:,.0f} تومان است. "
-              f"یک گزارش از تغییرات قیمت طلا و دلار در هفته و ماه گذشته پیدا کن و با فاصله بین خطوط بنویس.")
-    
-    ai_report = ask_liara_ai(prompt, "تو محقق بازار هستی.")
-    
-    if ai_report:
-        bot.send_message(message.chat.id, f"📊 **گزارش نوسانات تاریخی**\n\n{ai_report}", parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, "⚠️ هوش مصنوعی موقتاً در دسترس نیست.")
+    status = "📈 صعودی" if float(pct) >= 0 else "📉 نزولی"
+    bot.send_message(message.chat.id, f"📊 **تغییرات طلا ۱۸ عیار:**\n\nوضعیت: {status}\nمقدار: `{abs(val):,.0f}` تومان\nدرصد: `{pct}%`", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
     sync_market_data()
-    p_gold, p_usd, p_ons = get_p("IR_GOLD_18K"), get_p("USD"), get_p("XAUUSD")
-    if p_gold == 0 or p_usd == 0:
-        bot.reply_to(message, "❌ دیتا ناقص است.")
-        return
-
-    intrinsic = (p_ons * p_usd * 0.75) / 31.1035
-    bubble_pct = ((p_gold - intrinsic) / intrinsic) * 100
-    icon = "🔴" if bubble_pct > 0 else "🟢"
-    
-    msg = (f"⚪️ **آنالیز حباب طلا**\n\n"
-           f"💎 **ارزش واقعی:**\n\n`{intrinsic:,.0f}` تومان\n\n"
-           f"📊 **قیمت بازار:**\n\n`{p_gold:,.0f}` تومان\n\n"
-           f"{icon} **درصد حباب:**\n\n`{bubble_pct:.2f}%` ")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب")
-def calc_start(message):
-    msg = bot.send_message(message.chat.id, "⚖️ **وزن طلا (گرم):**")
-    bot.register_next_step_handler(msg, calc_step_2)
-
-def calc_step_2(message):
-    try:
-        w = float(message.text)
-        msg = bot.send_message(message.chat.id, "🛠 **درصد سود و اجرت:**")
-        bot.register_next_step_handler(msg, calc_final, w)
-    except:
-        bot.send_message(message.chat.id, "⚠️ لطفاً عدد انگلیسی وارد کنید.")
-
-def calc_final(message, w):
-    try:
-        sync_market_data()
-        p = get_p("IR_GOLD_18K")
-        total = (p * w) * (1 + float(message.text)/100)
-        bot.send_message(message.chat.id, f"💰 **مبلغ فاکتور نهایی:**\n\n`{total:,.0f}` تومان", parse_mode='Markdown')
-    except:
-        bot.send_message(message.chat.id, "⚠️ خطا در محاسبه.")
-
-@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند (AI)")
-def handle_ai_analysis(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    sync_market_data()
     p_gold = get_p("IR_GOLD_18K")
-    if p_gold == 0:
-        bot.reply_to(message, "❌ دیتایی برای تحلیل وجود ندارد.")
-        return
+    p_usd = get_p("USD")
+    p_ons = get_p("XAUUSD")
     
-    res = ask_liara_ai(f"قیمت طلا {p_gold:,.0f} تومان است. تحلیل کن بخرم؟")
-    bot.send_message(message.chat.id, f"🧠 **نظر مومو:**\n\n{res or 'خطای هوش مصنوعی'}")
-
-@bot.message_handler(func=lambda m: m.text == "📉 تحلیل تکنیکال")
-def handle_tech(message):
-    sync_market_data()
-    p = get_p("IR_GOLD_18K")
-    msg = (f"📉 **تحلیل تکنیکال**\n\n🛡 حمایت: `{p*0.985:,.0f}`\n\n🚀 مقاومت: `{p*1.015:,.0f}`")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda m: True)
-def handle_all_other_chats(message):
-    # اگر پیام دکمه‌ای نبود، با هوش مصنوعی چت کن
-    bot.send_chat_action(message.chat.id, 'typing')
-    sync_market_data()
-    ans = ask_liara_ai(message.text)
-    bot.reply_to(message, ans or "مومو فعلاً نمی‌تونه حرف بزنه!")
+    if p_gold > 0 and p_usd > 0:
+        intrinsic = (p_ons * p_usd * 0.75) / 31.1035
+        bubble = ((p_gold - intrinsic) / intrinsic) * 100
+        bot.send_message(message.chat.id, f"⚪️ **تحلیل حباب طلا**\n\n💰 ارزش ذاتی: `{intrinsic:,.0f}` تومان\n🎈 حباب: `{bubble:.2f}%`", parse_mode='Markdown')
+    else:
+        bot.reply_to(message, "❌ دیتا برای محاسبه حباب ناقص است.")
 
 # ----------------------------------------
 #           *** ۴. اجرای سرور ***
@@ -230,7 +154,7 @@ def webhook():
 
 @server.route('/')
 def index():
-    return f"Momo Bot v{VERSION} Fixed Active", 200
+    return f"Bot v{VERSION} is running smoothly.", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
