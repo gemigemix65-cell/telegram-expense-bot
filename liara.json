@@ -1,8 +1,14 @@
 {
   "app": "hesabdaribot",
   "port": 3000,
+  "platform": "python",
   "build": {
     "location": "iran"
   },
-  "disks": []
+  "disks": [
+    {
+      "name": "hesabdari",
+      "mountTo": "/app/data"
+    }
+  ]
 }
