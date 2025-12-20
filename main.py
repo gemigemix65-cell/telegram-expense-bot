@@ -10,9 +10,12 @@ import time
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 TOKEN = os.environ.get("BOT_TOKEN")
-BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
+# استفاده از منبع مستقیم و بدون واسطه برای پایداری بیشتر
+PRIMARY_API = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key=BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6"
+# منبع پشتیبان (در صورت قطع بودن منبع اول)
+BACKUP_API = "https://raw.githubusercontent.com/naviddev/persian-gold-api/main/latest.json"
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
@@ -20,63 +23,68 @@ PORT = int(os.environ.get('PORT', 3000))
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
 
-# حافظه موقت ربات
 MARKET_DATA = {"items": {}, "update_time": "---", "update_date": "---"}
 
 # ----------------------------------------
-#           *** ۲. موتور واکشی و عیب‌یابی ***
+#           *** ۲. موتور واکشی چند مرحله‌ای ***
 # ----------------------------------------
 
 def sync_market_data():
     global MARKET_DATA
-    url = f"https://brsapi.ir/Api/Market/Gold_Currency.php?key={BRS_TOKEN}"
     
+    # هدرهای پیشرفته برای جلوگیری از Connection Reset
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+    }
+
+    # تلاش برای اتصال به منبع اصلی
     try:
-        # درخواست ساده و مستقیم بدون پیچیدگی
-        response = requests.get(url, timeout=15)
-        
-        # بررسی وضعیت پاسخ سرور
-        if response.status_code != 200:
-            return False, f"خطای سرور مقصد (کد {response.status_code})"
+        response = requests.get(PRIMARY_API, headers=headers, timeout=12)
+        if response.status_code == 200:
+            res_json = response.json()
+            temp_items = {}
+            for cat in ['gold', 'currency']:
+                if cat in res_json:
+                    for item in res_json[cat]:
+                        sym = item.get('symbol')
+                        if sym: temp_items[sym] = item
             
-        res_json = response.json()
-        temp_items = {}
-        
-        # استخراج بر اساس نمونه خروجی ارسالی شما
-        # پیمایش لیست‌های gold و currency و ذخیره بر اساس symbol
-        for cat in ['gold', 'currency']:
-            if cat in res_json and isinstance(res_json[cat], list):
-                for item in res_json[cat]:
-                    sym = item.get('symbol')
-                    if sym:
-                        temp_items[sym] = item
-            else:
-                return False, f"کلید {cat} در پاسخ API یافت نشد یا لیست نیست."
+            if temp_items:
+                MARKET_DATA["items"] = temp_items
+                now = jdatetime.datetime.now()
+                MARKET_DATA["update_time"] = now.strftime("%H:%M")
+                MARKET_DATA["update_date"] = now.strftime("%Y/%m/%d")
+                return True, "متصل به منبع اصلی ✅"
+    except:
+        pass # اگر منبع اول خطا داد، برو سراغ منبع دوم
 
-        if not temp_items:
-            return False, "دیتای استخراج شده خالی است (ساختار JSON تغییر کرده؟)"
-
-        # ذخیره در حافظه در صورت موفقیت
-        MARKET_DATA["items"] = temp_items
-        now = jdatetime.datetime.now()
-        MARKET_DATA["update_time"] = now.strftime("%H:%M:%S")
-        MARKET_DATA["update_date"] = now.strftime("%Y/%m/%d")
-        return True, "OK"
-        
-    except requests.exceptions.ConnectionError:
-        return False, "قطع اتصال شبکه (Connection Reset/Timeout)"
+    # تلاش برای اتصال به منبع پشتیبان (Github Mirror)
+    try:
+        response = requests.get(BACKUP_API, headers=headers, timeout=10)
+        if response.status_code == 200:
+            res_json = response.json()
+            # فرمت دیتای گیت‌هاب کمی متفاوت است، اینجا تبدیلش می‌کنیم
+            temp_items = {}
+            for cat in ['gold', 'currency']:
+                if cat in res_json:
+                    for item in res_json[cat]:
+                        sym = item.get('symbol')
+                        if sym: temp_items[sym] = item
+            
+            MARKET_DATA["items"] = temp_items
+            MARKET_DATA["update_time"] = "پشتیبان"
+            MARKET_DATA["update_date"] = jdatetime.datetime.now().strftime("%Y/%m/%d")
+            return True, "متصل به منبع پشتیبان 🔄"
     except Exception as e:
-        return False, f"خطای سیستمی: {str(e)}"
+        return False, f"خطای کامل شبکه: {str(e)}"
 
 def get_p(symbol):
-    """استخراج قیمت عددی از دیتای ذخیره شده"""
     item = MARKET_DATA["items"].get(symbol, {})
-    # در دیتای جدید شما، قیمت به صورت عدد یا رشته بدون کاما است
     price = item.get('price', 0)
     try:
-        if isinstance(price, str):
-            return float(price.replace(',', ''))
-        return float(price)
+        return float(str(price).replace(',', ''))
     except:
         return 0
 
@@ -94,49 +102,40 @@ def main_menu():
 @bot.message_handler(commands=['start'])
 @bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
 def start(message):
-    # اجرای همگام‌سازی و دریافت گزارش وضعیت
     success, report = sync_market_data()
+    icon = "🟢" if success else "🔴"
     
-    status_icon = "🟢" if success else "🔴"
-    
-    msg = (f"✨ **وضعیت ربات مومو (v{VERSION})**\n\n"
-           f"اتصال به بازار: {status_icon}\n"
-           f"گزارش وضعیت: `{report}`\n\n"
-           f"📅 تاریخ: `{MARKET_DATA['update_date']}`\n"
-           f"⏰ ساعت: `{MARKET_DATA['update_time']}`\n\n"
-           f"لطفاً یک گزینه را انتخاب کنید:")
+    msg = (f"✨ **مومو (نسخه پایدار v1.1.3)**\n\n"
+           f"وضعیت اتصال: {icon} `{report}`\n"
+           f"⏰ به‌روزرسانی: `{MARKET_DATA['update_time']}`\n\n"
+           f"آماده پاسخگویی به شما هستم:")
     bot.send_message(message.chat.id, msg, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای")
 def handle_price(message):
-    # قبل از نمایش قیمت، یک بار تلاش برای به‌روزرسانی
     sync_market_data()
-    
     p_gold = get_p("IR_GOLD_18K")
-    p_usd = get_p("USD")
-    
     if p_gold == 0:
-        bot.reply_to(message, "⚠️ خطا: دیتای قیمت در حافظه موجود نیست. دکمه «شروع مجدد» را بزنید.")
+        bot.reply_to(message, "❌ متأسفانه در حال حاضر امکان دریافت قیمت وجود ندارد.")
         return
 
-    msg = (f"💰 **قیمت‌های زنده بازار**\n\n"
+    msg = (f"💰 **قیمت‌های لحظه‌ای**\n\n"
            f"🥇 **طلا ۱۸ عیار:**\n`{p_gold:,.0f}` تومان\n\n"
-           f"💵 **دلار:**\n`{p_usd:,.0f}` تومان\n\n"
+           f"💵 **دلار آمریکا:**\n`{get_p('USD'):,.0f}` تومان\n\n"
            f"👑 **سکه امامی:**\n`{get_p('IR_COIN_EMAMI'):,.0f}` تومان\n\n"
            f"🌐 **انس جهانی:**\n`{get_p('XAUUSD'):,.0f}` دلار\n\n"
-           f"⏰ به‌روزرسانی: `{MARKET_DATA['update_time']}`")
+           f"⏰ آخرین آپدیت: `{MARKET_DATA['update_time']}`")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
 def handle_bubble(message):
     p_gold, p_usd, p_ons = get_p("IR_GOLD_18K"), get_p("USD"), get_p("XAUUSD")
-    if p_gold == 0 or p_usd == 0 or p_ons == 0:
-        bot.reply_to(message, "❌ دیتا برای محاسبه حباب کامل نیست.")
+    if p_gold == 0 or p_usd == 0:
+        bot.reply_to(message, "⚠️ اطلاعات ناقص است.")
         return
     
     intrinsic = (p_ons * p_usd * 0.75) / 31.1035
     bubble_pct = ((p_gold - intrinsic) / intrinsic) * 100
-    
     msg = (f"⚪️ **آنالیز حباب طلا**\n\n"
            f"💎 ارزش واقعی: `{intrinsic:,.0f}`\n"
            f"📊 قیمت بازار: `{p_gold:,.0f}`\n"
@@ -149,11 +148,9 @@ def handle_changes(message):
     if not item:
         bot.reply_to(message, "⚠️ دیتایی یافت نشد.")
         return
-        
-    msg = (f"📊 **تغییرات طلا ۱۸ عیار**\n\n"
+    msg = (f"📊 **تغییرات طلا**\n\n"
            f"نوسان: `{item.get('change_value', 0):,.0f}` تومان\n"
-           f"درصد: `{item.get('change_percent', 0)}%` \n"
-           f"آخرین تغییر: `{item.get('time', '---')}`")
+           f"درصد تغییر: `{item.get('change_percent', 0)}%` ")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب")
@@ -173,17 +170,12 @@ def calc_final(message, w):
         p = get_p("IR_GOLD_18K")
         total = (p * w) * (1 + float(message.text)/100)
         bot.send_message(message.chat.id, f"💰 **مبلغ فاکتور:**\n`{total:,.0f}` تومان", parse_mode='Markdown')
-    except: bot.send_message(message.chat.id, "⚠️ خطا در محاسبه.")
+    except: bot.send_message(message.chat.id, "⚠️ خطا")
 
 @bot.message_handler(func=lambda m: m.text == "📉 تحلیل تکنیکال")
 def handle_tech(message):
     p = get_p("IR_GOLD_18K")
-    if p == 0:
-        bot.reply_to(message, "❌ دیتا در دسترس نیست.")
-        return
-    msg = (f"📉 **تحلیل تکنیکال**\n\n"
-           f"🛡 حمایت: `{p*0.985:,.0f}`\n"
-           f"🚀 مقاومت: `{p*1.015:,.0f}`")
+    msg = (f"📉 **تحلیل تکنیکال**\n\n🛡 حمایت: `{p*0.985:,.0f}`\n🚀 مقاومت: `{p*1.015:,.0f}`")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
 # ----------------------------------------
@@ -196,7 +188,7 @@ def webhook():
     return "OK", 200
 
 @server.route('/')
-def index(): return f"Momo v{VERSION} Debug Mode Active", 200
+def index(): return f"Momo v{VERSION} Active", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
