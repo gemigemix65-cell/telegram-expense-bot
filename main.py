@@ -15,14 +15,13 @@ import sqlite3
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
 
-# مسیر دیتابیس روی دیسک لیارا
 DB_PATH = '/app/data/market_history.db'
 
 server = Flask(__name__)
@@ -107,152 +106,102 @@ def get_p(symbol):
 
 def main_menu():
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("💰 قیمت لحظه‌ای طلا و ارز")
-    markup.row("📊 نمودار و تحلیل تغییرات", "🧠 تحلیل هوشمند")
-    markup.row("🧮 ماشین‌حساب طلا", "⚪️ حباب طلا")
-    markup.row("📉 تحلیل تکنیکال", "🔄 به‌روزرسانی")
+    # تعریف دقیق دکمه‌ها برای اطمینان از مطابقت
+    btn1 = telegram_types.KeyboardButton("💰 قیمت لحظه‌ای طلا و ارز")
+    btn2 = telegram_types.KeyboardButton("📊 نمودار و تحلیل تغییرات")
+    btn3 = telegram_types.KeyboardButton("🧠 تحلیل هوشمند")
+    btn4 = telegram_types.KeyboardButton("🧮 ماشین‌حساب طلا")
+    btn5 = telegram_types.KeyboardButton("⚪️ حباب طلا")
+    btn6 = telegram_types.KeyboardButton("📉 تحلیل تکنیکال")
+    btn7 = telegram_types.KeyboardButton("🔄 به‌روزرسانی")
+    
+    markup.row(btn1)
+    markup.row(btn2, btn3)
+    markup.row(btn4, btn5)
+    markup.row(btn6, btn7)
     return markup
 
-# --- شروع و به‌روزرسانی ---
 @bot.message_handler(commands=['start'])
-@bot.message_handler(func=lambda m: m.text == "🔄 به‌روزرسانی")
-def start_cmd(message):
+def send_welcome(message):
     sync_market_data()
-    msg = (f"✨ **دستیار بازار مومو (نسخه {VERSION})**\n\n"
-           f"📅 تاریخ: ` {MARKET_DATA['update_date']} `\n"
-           f"⏰ ساعت: ` {MARKET_DATA['update_time']} `\n"
-           f"📂 وضعیت دیتابیس: ` متصل به دیسک `")
-    bot.send_message(message.chat.id, msg, reply_markup=main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "✨ به دستیار بازار مومو خوش آمدید!", reply_markup=main_menu())
 
-# --- قیمت لحظه‌ای ---
-@bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای طلا و ارز")
-def handle_price(message):
+@bot.message_handler(func=lambda m: True)
+def handle_all_messages(message):
+    text = message.text
     sync_market_data()
-    msg = (f"💰 **قیمت‌های لحظه‌ای بازار**\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"🥇 طلا ۱۸ عیار: ` {get_p('IR_GOLD_18K'):,.0f} `\n"
-           f"💵 دلار آزاد: ` {get_p('USD'):,.0f} `\n"
-           f"👑 سکه امامی: ` {get_p('IR_COIN_EMAMI'):,.0f} `\n"
-           f"🌐 انس جهانی: ` {get_p('XAUUSD'):,.0f} `\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"⏰ به‌روزرسانی: ` {MARKET_DATA['update_time']} `")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-# --- حباب طلا ---
-@bot.message_handler(func=lambda m: m.text == "⚪️ حباب طلا")
-def handle_bubble(message):
-    sync_market_data()
-    p_gold, p_usd, p_ons = get_p("IR_GOLD_18K"), get_p("USD"), get_p("XAUUSD")
-    if p_gold == 0 or p_usd == 0:
-        bot.reply_to(message, "⚠️ خطا در دریافت اطلاعات از سرور.")
-        return
+    if "قیمت لحظه‌ای" in text:
+        msg = (f"💰 **قیمت‌های لحظه‌ای**\n"
+               f"➖➖➖➖➖➖➖➖➖➖\n"
+               f"🥇 طلا ۱۸ عیار: ` {get_p('IR_GOLD_18K'):,.0f} `\n"
+               f"💵 دلار آزاد: ` {get_p('USD'):,.0f} `\n"
+               f"👑 سکه امامی: ` {get_p('IR_COIN_EMAMI'):,.0f} `\n"
+               f"🌐 انس جهانی: ` {get_p('XAUUSD'):,.0f} `\n"
+               f"➖➖➖➖➖➖➖➖➖➖\n"
+               f"⏰ به‌روزرسانی: ` {MARKET_DATA['update_time']} `")
+        bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-    intrinsic = (p_ons * p_usd * 0.75) / 31.1035
-    bubble_val = p_gold - intrinsic
-    bubble_pct = (bubble_val / intrinsic) * 100
-    status = "📈 حباب مثبت" if bubble_val > 0 else "📉 حباب منفی"
+    elif "حباب طلا" in text:
+        p_gold, p_usd, p_ons = get_p("IR_GOLD_18K"), get_p("USD"), get_p("XAUUSD")
+        intrinsic = (p_ons * p_usd * 0.75) / 31.1035
+        bubble_val = p_gold - intrinsic
+        bubble_pct = (bubble_val / intrinsic) * 100
+        msg = (f"⚪️ **آنالیز حباب طلا**\n"
+               f"💰 ارزش ذاتی: ` {intrinsic:,.0f} `\n"
+               f"📊 میزان حباب: ` {bubble_val:,.0f} `\n"
+               f"🔢 درصد حباب: ` %{bubble_pct:.2f} `")
+        bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-    msg = (f"⚪️ **آنالیز حباب طلا ۱۸ عیار**\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"💰 ارزش ذاتی: ` {intrinsic:,.0f} ` تومان\n"
-           f"🏪 قیمت بازار: ` {p_gold:,.0f} ` تومان\n"
-           f"📊 میزان حباب: **` {bubble_val:,.0f} ` تومان**\n"
-           f"🔢 درصد حباب: **` %{bubble_pct:.2f} `**\n"
-           f"📌 وضعیت: {status}")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+    elif "نمودار" in text:
+        history = get_history("IR_GOLD_18K", 7)
+        if len(history) < 2:
+            bot.send_message(message.chat.id, "⚠️ دیتا کافی نیست.")
+            return
+        plt.figure(figsize=(8, 4))
+        prices = [x[0] for x in history]; dates = [x[1][-5:] for x in history]
+        plt.plot(dates, prices, color='#f1c40f', marker='o')
+        plt.gcf().set_facecolor('#1a1a1a'); plt.gca().set_facecolor('#1a1a1a')
+        plt.tick_params(colors='white')
+        buf = io.BytesIO(); plt.savefig(buf, format='png', facecolor='#1a1a1a'); buf.seek(0); plt.close()
+        bot.send_photo(message.chat.id, buf, caption="📊 روند تغییرات ۷ روزه")
 
-# --- نمودار هفتگی ---
-@bot.message_handler(func=lambda m: m.text == "📊 نمودار و تحلیل تغییرات")
-def handle_chart(message):
-    sync_market_data()
-    history = get_history("IR_GOLD_18K", 7)
-    item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
-    pct, val = item.get('change_percent', 0), item.get('change_value', 0)
-    
-    msg = (f"📊 **تحلیل تغییرات (۷ روز اخیر)**\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"💰 قیمت فعلی: ` {get_p('IR_GOLD_18K'):,.0f} `\n"
-           f"📉 تغییر امروز: ` {val} ` تومان\n"
-           f"🔢 درصد تغییر: ` %{pct} `\n"
-           f"➖➖➖➖➖➖➖➖➖➖")
-    
-    if len(history) < 2:
-        bot.send_message(message.chat.id, msg + "\n⚠️ دیتای کافی برای رسم نمودار موجود نیست. لطفاً فردا امتحان کنید.")
-        return
+    elif "تحلیل هوشمند" in text:
+        p_gold = get_p("IR_GOLD_18K")
+        history = get_history("IR_GOLD_18K", 7)
+        if not history:
+            bot.send_message(message.chat.id, "🧠 دیتا موجود نیست.")
+            return
+        avg = sum([x[0] for x in history]) / len(history)
+        diff = ((p_gold - avg) / avg) * 100
+        bot.send_message(message.chat.id, f"🧠 **تحلیل هوشمند**\nمیانگین هفته: `{avg:,.0f}`\nفاصله از میانگین: `% {diff:.2f}`", parse_mode='Markdown')
 
-    plt.figure(figsize=(8, 4))
-    prices = [x[0] for x in history]
-    dates = [x[1][-5:] for x in history]
-    plt.plot(dates, prices, color='#f1c40f', marker='o', linewidth=2)
-    plt.gcf().set_facecolor('#1a1a1a')
-    plt.gca().set_facecolor('#1a1a1a')
-    plt.tick_params(colors='white')
-    
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', facecolor='#1a1a1a')
-    buf.seek(0)
-    plt.close()
-    bot.send_photo(message.chat.id, buf, caption=msg, parse_mode='Markdown')
+    elif "ماشین‌حساب" in text:
+        msg = bot.send_message(message.chat.id, "⚖️ وزن طلا را به **گرم** وارد کنید:")
+        bot.register_next_step_handler(msg, calc_step_2)
 
-# --- تحلیل هوشمند ---
-@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
-def handle_smart(message):
-    sync_market_data()
-    p_gold = get_p("IR_GOLD_18K")
-    history = get_history("IR_GOLD_18K", 7)
-    
-    if not history:
-        bot.send_message(message.chat.id, "🧠 دیتای کافی برای تحلیل هوشمند یافت نشد.")
-        return
+    elif "به‌روزرسانی" in text:
+        sync_market_data()
+        bot.send_message(message.chat.id, "🔄 اطلاعات با موفقیت به‌روزرسانی شد.")
 
-    prices = [x[0] for x in history]
-    avg_price = sum(prices) / len(prices)
-    diff = ((p_gold - avg_price) / avg_price) * 100
-    
-    advice = "🟢 قیمت در محدوده تعادلی است."
-    if diff > 1.5: advice = "🔴 قیمت بالاتر از میانگین هفته است. خرید پیشنهاد نمی‌شود."
-    elif diff < -1.5: advice = "🔵 قیمت پایین‌تر از میانگین هفته است. پله اول خرید بررسی شود."
+    elif "تحلیل تکنیکال" in text:
+        bot.send_message(message.chat.id, "📉 این بخش در حال آماده‌سازی است.")
 
-    msg = (f"🧠 **تحلیل هوشمند بازار**\n\n"
-           f"📈 میانگین ۷ روزه: ` {avg_price:,.0f} `\n"
-           f"📍 فاصله از میانگین: ` %{diff:.2f} `\n"
-           f"💡 **توصیه:** {advice}")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
-
-# --- ماشین حساب ---
-@bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب طلا")
-def calc_init(message):
-    msg = bot.send_message(message.chat.id, "⚖️ **وزن طلا را به گرم وارد کنید:**", parse_mode='Markdown')
-    bot.register_next_step_handler(msg, calc_step_2)
-
+# --- منطق ماشین حساب ---
 def calc_step_2(message):
     try:
         weight = float(message.text)
-        msg = bot.send_message(message.chat.id, "🛠 **درصد اجرت و سود را وارد کنید (فقط عدد):**")
+        msg = bot.send_message(message.chat.id, "🛠 درصد اجرت و سود را وارد کنید:")
         bot.register_next_step_handler(msg, calc_final, weight)
-    except:
-        bot.send_message(message.chat.id, "❌ خطا! لطفاً فقط عدد وارد کنید.")
+    except: bot.send_message(message.chat.id, "❌ عدد وارد کنید.")
 
 def calc_final(message, weight):
     try:
-        sync_market_data()
         price = get_p("IR_GOLD_18K")
         fee = float(message.text)
         total = (price * weight) * (1 + fee/100)
-        res = (f"🧮 **محاسبه نهایی:**\n\n"
-               f"⚖️ وزن: `{weight}` گرم\n"
-               f"💰 قیمت طلا: `{price:,.0f}`\n"
-               f"🛠 کارمزد: `{fee}%` \n"
-               f"➖➖➖➖➖➖➖➖➖➖\n"
-               f"💵 قابل پرداخت: **` {total:,.0f} ` تومان**")
-        bot.send_message(message.chat.id, res, parse_mode='Markdown')
-    except:
-        bot.send_message(message.chat.id, "❌ خطای محاسباتی.")
-
-# --- تحلیل تکنیکال ---
-@bot.message_handler(func=lambda m: m.text == "📉 تحلیل تکنیکال")
-def handle_tech(message):
-    bot.send_message(message.chat.id, "📉 این بخش در حال توسعه است و به زودی با اندیکاتورهای زنده فعال می‌شود.")
+        bot.send_message(message.chat.id, f"💵 مبلغ نهایی: **{total:,.0f}** تومان", parse_mode='Markdown')
+    except: bot.send_message(message.chat.id, "❌ خطا.")
 
 # ----------------------------------------
 #           *** ۵. اجرای سرور ***
