@@ -16,18 +16,18 @@ import sqlite3
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.5.2"
+VERSION = "1.6.6"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
+# آپدیت API Key جدید لیارا
+LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTRhZmQwYzMwZWM5YThmNWMyMjhkM2QiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2NTIyMTI0fQ.I1KRX5w-27Os1OUOIGRpVWT_EsBBkjVSy-xJ5Q8HJsA"
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
-
 DB_PATH = '/app/data/market_history.db'
 
 server = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
-
 MARKET_DATA = {"items": {}, "update_time": "---", "update_date": "---"}
 
 # ----------------------------------------
@@ -60,20 +60,10 @@ def get_history(symbol, limit=7):
     conn.close()
     return data[::-1]
 
-def get_db_count():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM history")
-        count = c.fetchone()[0]
-        conn.close()
-        return count
-    except: return 0
-
 init_db()
 
 # ----------------------------------------
-#           *** ۳. موتور واکشی دیتا ***
+#           *** ۳. موتور دیتا ***
 # ----------------------------------------
 
 def sync_market_data():
@@ -89,13 +79,11 @@ def sync_market_data():
                     for item in res_json[category]:
                         symbol = item.get('symbol')
                         if symbol: temp_items[symbol] = item
-            
             if temp_items:
                 MARKET_DATA["items"] = temp_items
                 now = jdatetime.datetime.now()
                 MARKET_DATA["update_time"] = now.strftime("%H:%M:%S")
                 MARKET_DATA["update_date"] = now.strftime("%Y/%m/%d")
-                
                 p_gold = get_p("IR_GOLD_18K")
                 if p_gold > 0: save_to_history("IR_GOLD_18K", p_gold)
                 return True
@@ -106,8 +94,7 @@ def get_p(symbol):
     item = MARKET_DATA["items"].get(symbol, {})
     price = item.get('price', 0)
     try:
-        if isinstance(price, str):
-            return float(price.replace(',', ''))
+        if isinstance(price, str): return float(price.replace(',', ''))
         return float(price)
     except: return 0
 
@@ -124,18 +111,79 @@ def main_menu():
     return markup
 
 @bot.message_handler(commands=['start'])
-@bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد")
+@bot.message_handler(func=lambda m: m.text == "🔄 شروع مجدد" or m.text == "بازگشت به منوی اصلی")
 def start_cmd(message):
     sync_market_data()
-    db_count = get_db_count()
-    msg = (f"✨ **دستیار بازار مومو**\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"📅 تاریخ: ` {MARKET_DATA['update_date']} `\n"
-           f"⏰ ساعت: ` {MARKET_DATA['update_time']} `\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"📂 وضعیت دیسک: متصل\n"
-           f"📊 رکوردهای ثبت شده: ` {db_count} `")
+    msg = "✨ **به دستیار هوشمند مومو خوش آمدید**\nلطفاً یک گزینه را انتخاب کنید:"
     bot.send_message(message.chat.id, msg, reply_markup=main_menu(), parse_mode='Markdown')
+
+# --- بخش تحلیل هوشمند با Gemini 2.0 Flash لیارا ---
+
+@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
+def smart_ai_intro(message):
+    sync_market_data()
+    p_gold = get_p("IR_GOLD_18K")
+    p_usd = get_p("USD")
+    
+    markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("بازگشت به منوی اصلی")
+    
+    msg = (f"🧠 **وارد بخش تحلیل هوشمند شدید**\n"
+           f"➖➖➖➖➖➖➖➖➖➖\n"
+           f"من به عنوان یک تحلیل‌گر خبره و باهوش با استفاده از مدل **Gemini 2.0** آماده پاسخگویی هستم.\n\n"
+           f"💰 قیمت فعلی طلا: `{p_gold:,.0f}`\n"
+           f"💵 قیمت فعلی دلار: `{p_usd:,.0f}`\n"
+           f"➖➖➖➖➖➖➖➖➖➖\n"
+           f"👇 **هر سوالی داری بپرس (مثلاً: الان بخرم یا صبر کنم؟)**")
+    
+    bot.send_message(message.chat.id, msg, reply_markup=markup, parse_mode='Markdown')
+    bot.register_next_step_handler(message, chat_with_gemini)
+
+def chat_with_gemini(message):
+    if message.text == "بازگشت به منوی اصلی":
+        start_cmd(message)
+        return
+
+    bot.send_chat_action(message.chat.id, 'typing')
+    
+    p_gold = get_p("IR_GOLD_18K")
+    p_usd = get_p("USD")
+    p_ons = get_p("XAUUSD")
+    
+    system_prompt = (
+        "تو یک تحلیل‌گر فوق حرفه‌ای، باهوش و خبره بازار طلای ایران هستی. نام تو 'مومو AI' است. "
+        "لحن تو صمیمی، دلسوز و در عین حال بسیار دقیق و تخصصی است. "
+        f"اطلاعات لحظه‌ای بازار: طلا ۱۸ عیار {p_gold:,.0f} تومان، دلار {p_usd:,.0f} تومان، انس جهانی {p_ons:,.0f} دلار. "
+        "باید بر اساس این اعداد و دانش تخصصی اقتصادی خودت، کاربر را راهنمایی کنی. پاسخ‌ها را زیبا و با اموجی‌های مرتبط تزیین کن."
+    )
+
+    payload = {
+        "model": "google/gemini-2.0-flash-001",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message.text}
+        ]
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {LIARA_AI_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post("https://api.liara.ir/v1/ai/chat/completions", json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            res_json = response.json()
+            ai_reply = res_json['choices'][0]['message']['content']
+        else:
+            ai_reply = "😔 پوزش می‌خوام، ارتباطم با مرکز تحلیل کمی ضعیف شده. لطفاً دوباره سوالت رو بپرس."
+    except:
+        ai_reply = "❌ خطایی در پردازش هوشمند رخ داد. احتمالاً کلید دسترسی نیاز به بررسی دارد."
+
+    msg = bot.send_message(message.chat.id, ai_reply, parse_mode='Markdown')
+    bot.register_next_step_handler(msg, chat_with_gemini)
+
+# --- بقیه هندلرها (💰 قیمت، 📊 نمودار، ⚪️ حباب، 🧮 ماشین حساب) ---
 
 @bot.message_handler(func=lambda m: m.text == "💰 قیمت لحظه‌ای طلا و ارز")
 def handle_price(message):
@@ -157,102 +205,42 @@ def handle_bubble(message):
     p_gold = get_p("IR_GOLD_18K")
     p_usd = get_p("USD")
     p_ons = get_p("XAUUSD")
-    if p_gold == 0 or p_usd == 0:
-        bot.reply_to(message, "⚠️ اطلاعات کافی نیست.")
-        return
     intrinsic = (p_ons * p_usd * 0.75) / 31.1035
     bubble_val = p_gold - intrinsic
     bubble_pct = (bubble_val / intrinsic) * 100
-    status = "🔴 حباب مثبت (گران)" if bubble_val > 0 else "🟢 حباب منفی (ارزان)"
-    msg = (
-        f"⚪️ **آنالیز حباب طلا ۱۸ عیار**\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"📐 **فرمول:**\n"
-        f"`(انس × دلار × 0.75) / 31.1035`\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"💰 ارزش ذاتی: ` {intrinsic:,.0f} ` تومان\n\n"
-        f"🏪 قیمت بازار: ` {p_gold:,.0f} ` تومان\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"📊 مقدار حباب: **` {bubble_val:,.0f} ` تومان**\n\n"
-        f"🔢 درصد حباب: **` %{bubble_pct:.2f} `**\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"📌 وضعیت: {status}"
-    )
+    msg = (f"⚪️ **آنالیز حباب طلا**\n"
+           f"➖➖➖➖➖➖➖➖➖➖\n"
+           f"📊 مقدار حباب: **` {bubble_val:,.0f} ` تومان**\n"
+           f"🔢 درصد حباب: **` %{bubble_pct:.2f} `**\n"
+           f"📌 وضعیت: {'🔴 حباب مثبت' if bubble_val > 0 else '🟢 حباب منفی'}")
     bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
-# --- نمودار تغییرات حرفه‌ای (v1.5.2) ---
 @bot.message_handler(func=lambda m: m.text == "📊 نمودار تغییرات")
 def handle_chart(message):
     sync_market_data()
     history = get_history("IR_GOLD_18K", 7)
-    item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
     current_p = get_p("IR_GOLD_18K")
-    
-    try:
-        val_str = str(item.get('change_value', 0)).replace(',', '')
-        change_val = float(val_str)
-        change_pct = float(str(item.get('change_percent', 0)).replace(',', ''))
-    except: 
-        change_val = 0.0
-        change_pct = 0.0
-
     if len(history) < 2:
-        yesterday_p = current_p - change_val
-        prices = [yesterday_p, current_p]
-        dates = ["Yesterday", "Today"]
+        prices = [current_p, current_p]
+        dates = ["Old", "Now"]
     else:
         prices = [x[0] for x in history]
         dates = [x[1][-5:] for x in history]
-
-    # پیدا کردن سقف و کف
-    high_p = max(prices)
-    low_p = min(prices)
-    high_idx = prices.index(high_p)
-    low_idx = prices.index(low_p)
-
-    # رسم نمودار
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(dates, prices, color='#f1c40f', marker='o', linewidth=2.5, label='Price Trend', zorder=1)
     
-    # اضافه کردن نقاط سقف و کف در نمودار
-    ax.scatter(dates[high_idx], high_p, color='#e74c3c', s=100, label='High', zorder=2, edgecolors='white')
-    ax.scatter(dates[low_idx], low_p, color='#2ecc71', s=100, label='Low', zorder=2, edgecolors='white')
-    
-    # برچسب متنی روی نقاط سقف و کف
-    ax.text(dates[high_idx], high_p, f'  High: {high_p:,.0f}', color='#e74c3c', fontweight='bold', va='bottom')
-    ax.text(dates[low_idx], low_p, f'  Low: {low_p:,.0f}', color='#2ecc71', fontweight='bold', va='top')
-
-    ax.set_title("Gold Market Analysis (Weekly)", color='white', fontsize=14, pad=20)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(dates, prices, color='#f1c40f', marker='o')
+    ax.set_title("Gold Price Trend", color='white')
     ax.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
-    ax.grid(True, color='white', linestyle='--', alpha=0.1)
     fig.patch.set_facecolor('#1a1a1a')
     ax.set_facecolor('#1a1a1a')
-    ax.tick_params(colors='white', which='both')
-    
+    ax.tick_params(colors='white')
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', facecolor='#1a1a1a', bbox_inches='tight')
+    plt.savefig(buf, format='png', facecolor='#1a1a1a')
     buf.seek(0)
     plt.close()
     
-    # مدیریت اموجی و جهت
-    status_emoji = "🟢" if change_val > 0 else "🔴" if change_val < 0 else "⚪️"
-    direction = "افزایش" if change_val > 0 else "کاهش" if change_val < 0 else "ثابت"
-    sign = "+" if change_val > 0 else ""
+    bot.send_photo(message.chat.id, buf, caption=f"📊 نمودار تغییرات ۷ روزه طلا\nقیمت فعلی: {current_p:,.0f}", parse_mode='Markdown')
 
-    caption = (f"📊 **تحلیل روند قیمت طلا**\n"
-               f"➖➖➖➖➖➖➖➖➖➖\n"
-               f"💰 قیمت فعلی: ` {current_p:,.0f} ` تومان\n\n"
-               f"📈 سقف هفتگی: ` {high_p:,.0f} ` تومان\n"
-               f"📉 کف هفتگی: ` {low_p:,.0f} ` تومان\n"
-               f"➖➖➖➖➖➖➖➖➖➖\n"
-               f"🕒 تغییرات ۲۴ ساعت اخیر:\n"
-               f"{status_emoji} مقدار: `{sign}{change_val:,.0f}` تومان ({direction})\n"
-               f"{status_emoji} درصد: `%{change_pct:+.2f}`\n"
-               f"➖➖➖➖➖➖➖➖➖➖")
-
-    bot.send_photo(message.chat.id, buf, caption=caption, parse_mode='Markdown')
-
-# --- بقیه هندلرها (ماشین حساب و تحلیل هوشمند) بدون تغییر نسبت به v1.5.1 ---
 @bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب طلا")
 def calc_menu(message):
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -263,7 +251,7 @@ def calc_menu(message):
 
 def calc_router(message):
     if message.text == "بازگشت به منوی اصلی":
-        bot.send_message(message.chat.id, "منوی اصلی:", reply_markup=main_menu())
+        start_cmd(message)
         return
     if "1️⃣" in message.text:
         msg = bot.send_message(message.chat.id, "⚖️ وزن (گرم):", reply_markup=telegram_types.ReplyKeyboardRemove())
@@ -308,18 +296,9 @@ def calc_profit_final(message, total_paid):
         bot.send_message(message.chat.id, res, reply_markup=main_menu(), parse_mode='Markdown')
     except: bot.send_message(message.chat.id, "❌ خطا.", reply_markup=main_menu())
 
-@bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
-def handle_smart(message):
-    sync_market_data()
-    p_gold = get_p("IR_GOLD_18K")
-    history = get_history("IR_GOLD_18K", 7)
-    avg_price = sum([x[0] for x in history]) / len(history) if history else p_gold
-    diff = ((p_gold - avg_price) / avg_price) * 100
-    msg = (f"🧠 **تحلیل هوشمند**\n"
-           f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"📈 میانگین هفته: ` {avg_price:,.0f} `\n"
-           f"📍 وضعیت: {'احتیاط' if diff > 1 else 'بررسی خرید' if diff < -1 else 'تثبیت'}")
-    bot.send_message(message.chat.id, msg, parse_mode='Markdown')
+# ----------------------------------------
+#           *** ۵. اجرای سرور ***
+# ----------------------------------------
 
 @server.route(f"/{TOKEN}", methods=['POST'])
 def webhook():
@@ -327,7 +306,7 @@ def webhook():
     return "OK", 200
 
 @server.route('/')
-def index(): return f"Momo v{VERSION} Running", 200
+def index(): return f"Momo v{VERSION} Ready", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
