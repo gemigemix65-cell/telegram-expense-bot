@@ -16,7 +16,7 @@ import sqlite3
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.6.7"
+VERSION = "1.6.8"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
 LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTRhZmQwYzMwZWM5YThmNWMyMjhkM2QiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2NTIyMTI0fQ.I1KRX5w-27Os1OUOIGRpVWT_EsBBkjVSy-xJ5Q8HJsA"
@@ -180,45 +180,36 @@ def handle_chart(message):
     history = get_history("IR_GOLD_18K", 7)
     item = MARKET_DATA["items"].get("IR_GOLD_18K", {})
     current_p = get_p("IR_GOLD_18K")
-    
     try:
         val_str = str(item.get('change_value', 0)).replace(',', '')
         change_val = float(val_str)
         change_pct = float(str(item.get('change_percent', 0)).replace(',', ''))
-    except: 
-        change_val, change_pct = 0.0, 0.0
-
+    except: change_val, change_pct = 0.0, 0.0
     if len(history) < 2:
         prices, dates = [current_p - change_val, current_p], ["Yesterday", "Today"]
     else:
         prices, dates = [x[0] for x in history], [x[1][-5:] for x in history]
-
     high_p, low_p = max(prices), min(prices)
     high_idx, low_idx = prices.index(high_p), prices.index(low_p)
-
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(dates, prices, color='#f1c40f', marker='o', linewidth=2.5, zorder=1)
     ax.scatter(dates[high_idx], high_p, color='#e74c3c', s=100, zorder=2, edgecolors='white')
     ax.scatter(dates[low_idx], low_p, color='#2ecc71', s=100, zorder=2, edgecolors='white')
     ax.text(dates[high_idx], high_p, f' High: {high_p:,.0f}', color='#e74c3c', fontweight='bold', va='bottom')
     ax.text(dates[low_idx], low_p, f' Low: {low_p:,.0f}', color='#2ecc71', fontweight='bold', va='top')
-    
     ax.set_title("Gold Market Analysis (Weekly)", color='white', fontsize=14, pad=20)
     ax.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
     ax.grid(True, color='white', linestyle='--', alpha=0.1)
     fig.patch.set_facecolor('#1a1a1a')
     ax.set_facecolor('#1a1a1a')
     ax.tick_params(colors='white')
-    
     buf = io.BytesIO()
     plt.savefig(buf, format='png', facecolor='#1a1a1a', bbox_inches='tight')
     buf.seek(0)
     plt.close()
-    
     status_emoji = "🟢" if change_val > 0 else "🔴" if change_val < 0 else "⚪️"
     direction = "افزایش" if change_val > 0 else "کاهش" if change_val < 0 else "ثابت"
     sign = "+" if change_val > 0 else ""
-
     caption = (f"📊 **تحلیل روند قیمت طلا**\n"
                f"➖➖➖➖➖➖➖➖➖➖\n"
                f"💰 قیمت فعلی: ` {current_p:,.0f} ` تومان\n\n"
@@ -231,7 +222,7 @@ def handle_chart(message):
                f"➖➖➖➖➖➖➖➖➖➖")
     bot.send_photo(message.chat.id, buf, caption=caption, parse_mode='Markdown')
 
-# --- بخش تحلیل هوشمند (اصلاح شده) ---
+# --- بخش تحلیل هوشمند (با قابلیت نمایش خطای دقیق) ---
 
 @bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
 def smart_ai_intro(message):
@@ -257,14 +248,29 @@ def chat_with_gemini(message):
                      f"با لحن دوستانه و حرفه‌ای تحلیل کن.")
 
     try:
-        # آدرس چت برای مدل‌های لیارا معمولاً v1/chat/completions است
-        res = requests.post("https://api.liara.ir/v1/ai/chat/completions", 
-                            headers={"Authorization": f"Bearer {LIARA_AI_KEY}"},
-                            json={"model": "google/gemini-2.0-flash-001", 
-                                  "messages": [{"role": "system", "content": system_prompt},
-                                               {"role": "user", "content": message.text}]}, timeout=30)
-        ai_reply = res.json()['choices'][0]['message']['content'] if res.status_code == 200 else "⚠️ خطا در پاسخ دهی."
-    except: ai_reply = "❌ ارتباط برقرار نشد."
+        # استفاده از مدل Gemini 2.0 Flash در لیارا
+        response = requests.post(
+            "https://api.liara.ir/v1/ai/chat/completions",
+            headers={"Authorization": f"Bearer {LIARA_AI_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "google/gemini-2.0-flash-001",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message.text}
+                ]
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            ai_reply = response.json()['choices'][0]['message']['content']
+        else:
+            # نمایش دقیق متن خطا برای عیب‌یابی
+            error_details = response.text
+            ai_reply = f"⚠️ **خطا در پاسخ‌دهی سرور لیارا:**\nکد وضعیت: `{response.status_code}`\nجزئیات: `{error_details}`"
+            
+    except Exception as e:
+        ai_reply = f"❌ **خطای سیستمی:**\n`{str(e)}`"
     
     msg = bot.send_message(message.chat.id, ai_reply, parse_mode='Markdown')
     bot.register_next_step_handler(msg, chat_with_gemini)
@@ -326,7 +332,7 @@ def webhook():
     return "OK", 200
 
 @server.route('/')
-def index(): return f"Momo v{VERSION} Fixed", 200
+def index(): return f"Momo v{VERSION} Ready", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
