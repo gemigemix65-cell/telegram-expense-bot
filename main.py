@@ -16,13 +16,13 @@ import sqlite3
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
-# اطلاعات اختصاصی لیارا شما
+# اطلاعات اختصاصی لیارا شما (مدل جدید)
 LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTRhZmQwYzMwZWM5YThmNWMyMjhkM2QiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2NTIyMTI0fQ.I1KRX5w-27Os1OUOIGRpVWT_EsBBkjVSy-xJ5Q8HJsA"
 BASE_URL = "https://ai.liara.ir/api/694af9b6363673561dac7aa6/v1/chat/completions"
-MODEL_ID = "google/gemini-2.0-flash-001"
+MODEL_ID = "openai/gpt-4o-mini" # تغییر به مدل جدید
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
@@ -225,30 +225,30 @@ def handle_chart(message):
                f"➖➖➖➖➖➖➖➖➖➖")
     bot.send_photo(message.chat.id, buf, caption=caption, parse_mode='Markdown')
 
-# --- بخش تحلیل هوشمند (نهایی شده با تنظیمات شما) ---
+# --- بخش تحلیل هوشمند (نهایی شده با GPT-4o mini) ---
 
 @bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
 def smart_ai_intro(message):
     sync_market_data()
     markup = telegram_types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("بازگشت به منوی اصلی")
-    msg = (f"🧠 **تحلیل‌گر هوشمند مومو (Gemini 2.0)**\n"
+    msg = (f"🧠 **تحلیل‌گر هوشمند مومو (GPT-4o mini)**\n"
            f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"من با دسترسی به بازار لحظه‌ای آماده پاسخگویی هستم.\n\n"
+           f"من آماده پاسخگویی به سوالات شما درباره بازار طلا هستم.\n\n"
            f"👇 **سوال خود را بپرسید:**")
     bot.send_message(message.chat.id, msg, reply_markup=markup, parse_mode='Markdown')
-    bot.register_next_step_handler(message, chat_with_gemini)
+    bot.register_next_step_handler(message, chat_with_ai)
 
-def chat_with_gemini(message):
+def chat_with_ai(message):
     if message.text == "بازگشت به منوی اصلی":
         start_cmd(message)
         return
     bot.send_chat_action(message.chat.id, 'typing')
     p_gold, p_usd, p_ons = get_p("IR_GOLD_18K"), get_p("USD"), get_p("XAUUSD")
     
-    system_prompt = (f"تو 'مومو AI' هستی، یک تحلیل‌گر نابغه بازار طلا. "
+    system_prompt = (f"تو 'مومو AI' هستی، یک تحلیل‌گر خبره بازار طلا. "
                      f"دیتای فعلی: طلا {p_gold:,.0f}، دلار {p_usd:,.0f}، انس {p_ons:,.0f}. "
-                     f"با لحن دوستانه و حرفه‌ای تحلیل کن.")
+                     f"با لحن دوستانه و حرفه‌ای تحلیل کن و راهنمایی‌های لازم را ارائه بده.")
 
     try:
         response = requests.post(
@@ -267,13 +267,13 @@ def chat_with_gemini(message):
         if response.status_code == 200:
             ai_reply = response.json()['choices'][0]['message']['content']
         else:
-            ai_reply = f"⚠️ **خطا در پاسخ‌دهی:**\nکد: `{response.status_code}`\nجزئیات: `{response.text}`"
+            ai_reply = f"⚠️ **خطا در ارتباط با هوش مصنوعی:**\nکد: `{response.status_code}`\nجزئیات: `{response.text}`"
             
     except Exception as e:
         ai_reply = f"❌ **خطا:**\n`{str(e)}`"
     
     msg = bot.send_message(message.chat.id, ai_reply, parse_mode='Markdown')
-    bot.register_next_step_handler(msg, chat_with_gemini)
+    bot.register_next_step_handler(msg, chat_with_ai)
 
 # --- ماشین حساب (بدون تغییر) ---
 @bot.message_handler(func=lambda m: m.text == "🧮 ماشین‌حساب طلا")
