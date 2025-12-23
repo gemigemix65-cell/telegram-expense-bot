@@ -16,10 +16,13 @@ import sqlite3
 #           *** ۱. تنظیمات پایه ***
 # ----------------------------------------
 
-VERSION = "1.6.8"
+VERSION = "1.7.1"
 TOKEN = os.environ.get("BOT_TOKEN")
 BRS_TOKEN = "BkNmf9UQe3W56CbbdBFw7bDV8LzAtGW6" 
+# اطلاعات اختصاصی لیارا شما
 LIARA_AI_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXkiOiI2OTRhZmQwYzMwZWM5YThmNWMyMjhkM2QiLCJ0eXBlIjoiYWlfa2V5IiwiaWF0IjoxNzY2NTIyMTI0fQ.I1KRX5w-27Os1OUOIGRpVWT_EsBBkjVSy-xJ5Q8HJsA"
+BASE_URL = "https://ai.liara.ir/api/694af9b6363673561dac7aa6/v1/chat/completions"
+MODEL_ID = "google/gemini-2.0-flash-001"
 
 WEBHOOK_URL_BASE = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 3000))
@@ -222,7 +225,7 @@ def handle_chart(message):
                f"➖➖➖➖➖➖➖➖➖➖")
     bot.send_photo(message.chat.id, buf, caption=caption, parse_mode='Markdown')
 
-# --- بخش تحلیل هوشمند (با قابلیت نمایش خطای دقیق) ---
+# --- بخش تحلیل هوشمند (نهایی شده با تنظیمات شما) ---
 
 @bot.message_handler(func=lambda m: m.text == "🧠 تحلیل هوشمند")
 def smart_ai_intro(message):
@@ -231,7 +234,7 @@ def smart_ai_intro(message):
     markup.row("بازگشت به منوی اصلی")
     msg = (f"🧠 **تحلیل‌گر هوشمند مومو (Gemini 2.0)**\n"
            f"➖➖➖➖➖➖➖➖➖➖\n"
-           f"من با دسترسی به قیمت‌های لحظه‌ای آماده پاسخگویی هستم.\n\n"
+           f"من با دسترسی به بازار لحظه‌ای آماده پاسخگویی هستم.\n\n"
            f"👇 **سوال خود را بپرسید:**")
     bot.send_message(message.chat.id, msg, reply_markup=markup, parse_mode='Markdown')
     bot.register_next_step_handler(message, chat_with_gemini)
@@ -248,29 +251,26 @@ def chat_with_gemini(message):
                      f"با لحن دوستانه و حرفه‌ای تحلیل کن.")
 
     try:
-        # استفاده از مدل Gemini 2.0 Flash در لیارا
         response = requests.post(
-            "https://api.liara.ir/v1/ai/chat/completions",
+            BASE_URL,
             headers={"Authorization": f"Bearer {LIARA_AI_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "google/gemini-2.0-flash-001",
+                "model": MODEL_ID,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": message.text}
                 ]
             },
-            timeout=30
+            timeout=40
         )
         
         if response.status_code == 200:
             ai_reply = response.json()['choices'][0]['message']['content']
         else:
-            # نمایش دقیق متن خطا برای عیب‌یابی
-            error_details = response.text
-            ai_reply = f"⚠️ **خطا در پاسخ‌دهی سرور لیارا:**\nکد وضعیت: `{response.status_code}`\nجزئیات: `{error_details}`"
+            ai_reply = f"⚠️ **خطا در پاسخ‌دهی:**\nکد: `{response.status_code}`\nجزئیات: `{response.text}`"
             
     except Exception as e:
-        ai_reply = f"❌ **خطای سیستمی:**\n`{str(e)}`"
+        ai_reply = f"❌ **خطا:**\n`{str(e)}`"
     
     msg = bot.send_message(message.chat.id, ai_reply, parse_mode='Markdown')
     bot.register_next_step_handler(msg, chat_with_gemini)
@@ -332,7 +332,7 @@ def webhook():
     return "OK", 200
 
 @server.route('/')
-def index(): return f"Momo v{VERSION} Ready", 200
+def index(): return f"Momo v{VERSION} Final", 200
 
 if __name__ == "__main__":
     bot.remove_webhook()
